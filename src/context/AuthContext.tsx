@@ -55,7 +55,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   const login = useCallback(
     async (payload: { identifier: string; password: string }) => {
-      applyAuth(await apiPost<AuthPayload>('/auth/login', payload, { auth: false }))
+      const auth = await apiPost<AuthPayload>('/auth/login', payload, { auth: false })
+      applyAuth(auth)
+      return auth
     },
     [applyAuth],
   )

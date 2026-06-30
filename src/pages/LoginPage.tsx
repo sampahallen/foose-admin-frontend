@@ -8,7 +8,7 @@ import { navigateTo } from '../utils/navigation'
 
 export function LoginPage() {
   const brand = getAppName()
-  const { login, user } = useAuth()
+  const { login, logout, user } = useAuth()
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const redirectTarget = redirectFromSearch('/admin')
@@ -24,10 +24,17 @@ export function LoginPage() {
     setError('')
 
     try {
-      await login({
+      const auth = await login({
         identifier: String(formData.get('identifier') || ''),
         password: String(formData.get('password') || ''),
       })
+
+      if (auth.user.role !== 'admin') {
+        await logout()
+        setError('This account does not have admin access.')
+        return
+      }
+
       navigateTo(redirectTarget)
     } catch (requestError) {
       setError(getErrorMessage(requestError, 'Unable to log in'))
