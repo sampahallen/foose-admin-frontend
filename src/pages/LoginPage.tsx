@@ -1,20 +1,20 @@
 import { useEffect, useState, type FormEvent } from 'react'
-import { ErrorState } from '../components'
-import { getAppName } from '../config/env'
+import { adminHomeForRoles, isStaffRole } from '../constants/roles'
 import { useAuth } from '../hooks/useAuth'
 import { redirectFromSearch } from '../utils/authRedirect'
 import { getErrorMessage } from '../utils/errorMessage'
 import { navigateTo } from '../utils/navigation'
 
 export function LoginPage() {
-  const brand = getAppName()
   const { login, logout, user } = useAuth()
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const redirectTarget = redirectFromSearch('/admin')
 
   useEffect(() => {
-    if (user?.role === 'admin') navigateTo(redirectTarget)
+    if (user && isStaffRole(user.roles, user.role)) {
+      navigateTo(redirectTarget === '/admin' ? adminHomeForRoles(user.roles, user.role) : redirectTarget)
+    }
   }, [redirectTarget, user])
 
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
@@ -29,13 +29,13 @@ export function LoginPage() {
         password: String(formData.get('password') || ''),
       })
 
-      if (auth.user.role !== 'admin') {
+      if (!isStaffRole(auth.user.roles, auth.user.role)) {
         await logout()
         setError('This account does not have admin access.')
         return
       }
 
-      navigateTo(redirectTarget)
+      navigateTo(redirectTarget === '/admin' ? adminHomeForRoles(auth.user.roles, auth.user.role) : redirectTarget)
     } catch (requestError) {
       setError(getErrorMessage(requestError, 'Unable to log in'))
     } finally {
@@ -44,22 +44,60 @@ export function LoginPage() {
   }
 
   return (
-    <main className="admin-auth-page min-h-dvh bg-foose-bg flex items-center justify-center p-4">
-      <form className="form-card rounded-xl border border-foose-border bg-foose-surface shadow-sm p-4 md:p-5 [&_label]:text-sm [&_label]:font-semibold [&_label]:text-foose-text [&_label]:flex [&_label]:flex-col [&_label]:gap-2 [&_input]:w-full [&_input]:px-3 [&_input]:py-3 [&_select]:w-full [&_select]:px-3 [&_select]:py-3 [&_textarea]:w-full [&_textarea]:px-3 [&_textarea]:py-3 max-lg:rounded-lg max-lg:p-3 auth-card mx-auto w-full max-w-3xl p-5 md:p-8 admin-login-card max-w-md" onSubmit={(event) => void handleSubmit(event)}>
-        <h1>{brand} Admin</h1>
-        <p>Sign in with your normal Foose account. Access is granted only when that account has the admin role.</p>
-        <label>
-          Email or username
-          <input autoComplete="username" name="identifier" required />
-        </label>
-        <label>
-          Password
-          <input autoComplete="current-password" name="password" required type="password" />
-        </label>
-        {error && <ErrorState message={error} />}
-        <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-primary border-accent bg-accent text-white shadow-md shadow-accent/15 hover:bg-accent-hover full" disabled={submitting} type="submit">
-          {submitting ? 'Logging in...' : 'Log in'}
-        </button>
+    <main className="admin-auth-page flex min-h-dvh items-center justify-center bg-[#f5f7fb] px-4 py-10 text-foose-text">
+      <form
+        className="w-full max-w-[440px] rounded-lg border border-[#d9deea] bg-foose-surface p-6 shadow-[0_22px_70px_rgba(26,27,37,0.13)] sm:p-8"
+        onSubmit={(event) => void handleSubmit(event)}
+      >
+        <div className="mb-8 flex items-center gap-4">
+          <span className="flex size-14 shrink-0 items-center justify-center rounded-lg border border-accent/15 bg-accent-light shadow-sm">
+            <img alt="Foose" className="size-9 rounded-md object-cover" src="/foose-favicon.jpg" />
+          </span>
+          <div>
+            <h1 className="font-display text-3xl font-semibold leading-tight text-foose-text">Foose Admin</h1>
+            <p className="mt-1 text-sm leading-6 text-foose-muted">Sign into your foose admin account.</p>
+          </div>
+        </div>
+
+        <div className="space-y-5">
+          <label className="block text-sm font-semibold text-foose-text">
+            Email or username
+            <input
+              autoComplete="username"
+              className="mt-2 h-12 w-full rounded-lg border border-foose-border bg-white px-3.5 text-base text-foose-text outline-none transition placeholder:text-foose-faint focus:border-accent focus:ring-4 focus:ring-accent/10"
+              name="identifier"
+              required
+            />
+          </label>
+          <label className="block text-sm font-semibold text-foose-text">
+            Password
+            <input
+              autoComplete="current-password"
+              className="mt-2 h-12 w-full rounded-lg border border-foose-border bg-white px-3.5 text-base text-foose-text outline-none transition placeholder:text-foose-faint focus:border-accent focus:ring-4 focus:ring-accent/10"
+              name="password"
+              required
+              type="password"
+            />
+          </label>
+
+          {error && (
+            <p
+              aria-live="polite"
+              className="rounded-lg border border-foose-danger-bg bg-foose-danger-bg px-3.5 py-3 text-sm font-medium text-foose-danger"
+              role="alert"
+            >
+              {error}
+            </p>
+          )}
+
+          <button
+            className="inline-flex min-h-12 w-full items-center justify-center rounded-lg border border-accent bg-accent px-5 py-3 text-sm font-bold text-white shadow-md shadow-accent/20 transition hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-60"
+            disabled={submitting}
+            type="submit"
+          >
+            {submitting ? 'Signing in...' : 'Sign in'}
+          </button>
+        </div>
       </form>
     </main>
   )

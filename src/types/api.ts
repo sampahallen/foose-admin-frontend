@@ -1,3 +1,5 @@
+import type { UserRole, UserRoles } from '../constants/roles'
+
 export type ApiSuccess<T> = {
   success: true
   data: T
@@ -25,7 +27,8 @@ export type User = {
   username: string
   phone?: string
   profilePhoto?: string
-  role: 'user' | 'admin'
+  roles?: UserRoles
+  role?: UserRole | string | number
   isEmailVerified: boolean
   isKycVerified: boolean
   hasShop: boolean
@@ -39,6 +42,8 @@ export type User = {
   }
   kycId?: KycRecord | string | null
   following?: string[]
+  createdAt?: string
+  updatedAt?: string
 }
 
 export type Shop = {
@@ -249,10 +254,90 @@ export type PaginatedListings = {
   pages: number
 }
 
+export type PaginatedKycRecords = {
+  records: KycRecord[]
+  total: number
+  page: number
+  pages: number
+  limit: number
+}
+
 export type AdminStats = {
+  charts: {
+    disputeEscrow: Array<{ count: number; escrowStatus: string }>
+    disputeTrend: Array<{ date: string; disputes: number }>
+    kycStatus: Array<{ count: number; status: KycRecord['status'] | string }>
+    listingStatus: Array<{ count: number; status: Listing['status'] | string }>
+    listingTrend: Array<{ date: string; listings: number }>
+    listingType: Array<{ count: number; type: Listing['type'] | string }>
+    orderStatus: Array<{ count: number; status: Order['status'] | string }>
+    orderTrend: Array<{ date: string; orders: number }>
+    pendingKycByIdType: Array<{ count: number; idType: KycRecord['idType'] | string }>
+    revenueTrend: Array<{ date: string; orders: number; revenue: number }>
+    shopCategory: Array<{ category: Shop['category'] | string; count: number }>
+    shopLive: Array<{ count: number; status: 'Live' | 'Offline' | string }>
+    shopTrend: Array<{ date: string; shops: number }>
+    userStatus: Array<{ count: number; status: string }>
+    userTrend: Array<{ date: string; users: number }>
+    userVerification: Array<{ count: number; status: string }>
+  }
   users: number
   shops: number
   orders: number
   listings: number
+  pendingKyc: number
+  pendingOrders: number
+  disputes: number
   revenue: number
+}
+
+export type AnalyticsEventType =
+  | 'page_view'
+  | 'js_error'
+  | 'unhandled_rejection'
+  | 'api_failure'
+  | 'resource_error'
+  | 'custom'
+
+export type AnalyticsSeverity = 'info' | 'warning' | 'error' | 'critical'
+export type AnalyticsSource = 'marketplace' | 'admin' | 'backend' | 'unknown'
+
+export type AnalyticsTimelinePoint = {
+  apiFailures: number
+  clientErrors: number
+  critical: number
+  date: string
+  events: number
+  pageViews: number
+}
+
+export type AnalyticsRecentError = {
+  _id: string
+  createdAt?: string
+  endpoint?: string
+  message?: string
+  method?: string
+  path?: string
+  severity: AnalyticsSeverity
+  source: AnalyticsSource
+  statusCode?: number
+  type: AnalyticsEventType
+  url?: string
+}
+
+export type AdminAnalytics = {
+  bySeverity: Array<{ count: number; severity: AnalyticsSeverity | 'unknown' }>
+  bySource: Array<{ count: number; source: AnalyticsSource }>
+  byType: Array<{ count: number; type: AnalyticsEventType | 'unknown' }>
+  days: number
+  recentErrors: AnalyticsRecentError[]
+  summary: {
+    apiFailures: number
+    clientErrors: number
+    critical: number
+    events: number
+    failureRate: number
+    pageViews: number
+  }
+  timeline: AnalyticsTimelinePoint[]
 }

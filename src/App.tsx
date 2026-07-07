@@ -1,9 +1,11 @@
 import { useEffect, useState } from 'react'
 import { AuthRequired } from './components'
 import { AdminDisputesPage } from './pages/AdminDisputesPage'
+import { AdminAnalyticsPage } from './pages/AdminAnalyticsPage'
 import { AdminKycDetailPage } from './pages/AdminKycDetailPage'
 import { AdminKycPage } from './pages/AdminKycPage'
 import { AdminOverviewPage } from './pages/AdminOverviewPage'
+import { AdminUserRolesPage } from './pages/AdminUserRolesPage'
 import { LoginPage } from './pages/LoginPage'
 import { getCurrentAppPathname } from './utils/navigation'
 
@@ -48,8 +50,24 @@ export default function App() {
     )
   }
 
+  if (pathname.startsWith('/admin/analytics')) {
+    return (
+      <AuthRequired superAdminOnly>
+        <AdminAnalyticsPage />
+      </AuthRequired>
+    )
+  }
+
+  if (pathname.startsWith('/admin/users')) {
+    return (
+      <AuthRequired superAdminOnly>
+        <AdminUserRolesPage />
+      </AuthRequired>
+    )
+  }
+
   return (
-    <AuthRequired>
+    <AuthRequired superAdminOnly>
       <AdminOverviewPage />
     </AuthRequired>
   )

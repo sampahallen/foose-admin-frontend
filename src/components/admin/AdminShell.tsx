@@ -1,57 +1,235 @@
-import type { ReactNode } from 'react'
+import { useEffect, useState, type ReactNode } from 'react'
+import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse } from 'react-icons/tb'
+import { canResolveDisputes, canReviewKyc, isSuperAdminRole, type UserRoles } from '../../constants/roles'
 import { getAppName } from '../../config/env'
 import { useAuth } from '../../hooks/useAuth'
 import { initials } from '../../utils/format'
 import { withBasePath } from '../../utils/navigation'
+import { LogoutConfirmDialog } from '../auth/LogoutConfirmDialog'
 import { Icon, type IconName } from '../icons/Icon'
 
-const NAV: Array<{ key: 'overview' | 'kyc' | 'disputes'; label: string; href: string; icon: IconName }> = [
-  { href: '/admin', icon: 'grid', key: 'overview', label: 'Dashboard' },
-  { href: '/admin/kyc', icon: 'shield', key: 'kyc', label: 'KYC Reviews' },
-  { href: '/admin/disputes', icon: 'alert', key: 'disputes', label: 'Dispute Center' },
+type AdminSection = 'overview' | 'kyc' | 'disputes' | 'analytics' | 'users'
+
+const NAV: Array<{
+  allowed: (roles?: UserRoles, legacyRole?: number | string) => boolean
+  key: AdminSection
+  label: string
+  href: string
+  icon: IconName
+}> = [
+  { allowed: isSuperAdminRole, href: '/admin', icon: 'grid', key: 'overview', label: 'Dashboard' },
+  { allowed: canReviewKyc, href: '/admin/kyc', icon: 'shield', key: 'kyc', label: 'KYC Reviews' },
+  { allowed: canResolveDisputes, href: '/admin/disputes', icon: 'alert', key: 'disputes', label: 'Disputes' },
+  { allowed: isSuperAdminRole, href: '/admin/analytics', icon: 'chart', key: 'analytics', label: 'Analytics' },
 ]
 
-export function AdminShell({ section, children }: { section: 'overview' | 'kyc' | 'disputes'; children: ReactNode }) {
+function searchPlaceholder(section: AdminSection) {
+  if (section === 'disputes') return 'Search disputes...'
+  if (section === 'kyc') return 'Search KYC records...'
+  if (section === 'analytics') return 'Search analytics...'
+  return 'Search marketplace...'
+}
+
+export function AdminShell({ section, children }: { section: AdminSection; children: ReactNode }) {
   const { logout, user } = useAuth()
   const brand = getAppName()
+  const [menuOpen, setMenuOpen] = useState(false)
+  const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
+  const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
+  const allowedNav = NAV.filter((item) => item.allowed(user?.roles, user?.role))
+
+  useEffect(() => {
+    if (!menuOpen) return undefined
+
+    const originalOverflow = document.body.style.overflow
+    document.body.style.overflow = 'hidden'
+    return () => {
+      document.body.style.overflow = originalOverflow
+    }
+  }, [menuOpen])
+
+  function closeMenu() {
+    setMenuOpen(false)
+  }
+
+  function requestLogout() {
+    closeMenu()
+    setLogoutConfirmOpen(true)
+  }
+
+  function cancelLogout() {
+    setLogoutConfirmOpen(false)
+  }
+
+  function confirmLogout() {
+    setLogoutConfirmOpen(false)
+    void logout()
+  }
+
+  const sidebarWidth = sidebarCollapsed ? 'lg:grid-cols-[80px_minmax(0,1fr)]' : 'lg:grid-cols-[256px_minmax(0,1fr)]'
+  const sidebarLabelClass = sidebarCollapsed ? 'lg:sr-only' : ''
 
   return (
-    <div className="admin-shell min-h-dvh bg-foose-bg lg:grid lg:grid-cols-[256px_minmax(0,1fr)]">
-      <aside className="admin-sidebar sticky top-0 z-40 flex min-h-16 items-center justify-between border-b border-foose-border bg-foose-surface p-4 lg:h-dvh lg:flex-col lg:items-stretch lg:border-b-0 lg:border-r [&_h1]:text-xl [&_h1]:font-bold [&_h1]:text-accent [&_p]:text-xs [&_p]:uppercase [&_p]:tracking-widest [&_p]:text-foose-muted [&_nav]:hidden [&_nav]:flex-col [&_nav]:gap-2 [&_nav]:lg:flex [&_nav_a]:flex [&_nav_a]:items-center [&_nav_a]:gap-3 [&_nav_a]:rounded-lg [&_nav_a]:px-4 [&_nav_a]:py-3 [&_nav_a]:text-sm [&_nav_a]:font-semibold [&_nav_a]:text-foose-muted [&_nav_a]:hover:bg-accent-light [&_nav_a]:hover:text-accent [&_footer_a]:flex [&_footer_a]:items-center [&_footer_a]:gap-3 [&_footer_a]:rounded-lg [&_footer_a]:px-4 [&_footer_a]:py-3 [&_footer_a]:text-sm [&_footer_a]:font-semibold [&_footer_a]:text-foose-muted [&_footer_a]:hover:bg-accent-light [&_footer_a]:hover:text-accent [&_footer_button.admin-footer-action]:flex [&_footer_button.admin-footer-action]:items-center [&_footer_button.admin-footer-action]:gap-3 [&_footer_button.admin-footer-action]:rounded-lg [&_footer_button.admin-footer-action]:px-4 [&_footer_button.admin-footer-action]:py-3 [&_footer_button.admin-footer-action]:text-sm [&_footer_button.admin-footer-action]:font-semibold [&_footer_button.admin-footer-action]:text-foose-muted [&_footer_button.admin-footer-action]:hover:bg-accent-light [&_footer_button.admin-footer-action]:hover:text-accent [&_nav_a.active]:bg-accent [&_nav_a.active]:text-white [&_.button]:hidden [&_.button]:lg:inline-flex [&_footer]:hidden [&_footer]:border-t [&_footer]:border-foose-border [&_footer]:pt-4 [&_footer]:lg:block">
-        <div>
-          <h1>{brand} Admin</h1>
-          <p>Management Suite</p>
+    <div className={`admin-shell min-h-dvh bg-foose-bg lg:grid ${sidebarWidth}`}>
+      <aside
+        className={`admin-sidebar sticky top-0 z-40 flex min-h-16 items-center border-b border-foose-border bg-foose-surface p-4 transition-all lg:h-dvh lg:flex-col lg:border-b-0 lg:border-r ${
+          sidebarCollapsed ? 'justify-between lg:items-center lg:px-3' : 'justify-between lg:items-stretch'
+        }`}
+      >
+        <div className={`flex items-start justify-between gap-3 ${sidebarCollapsed ? 'lg:w-full lg:justify-center' : ''}`}>
+          <div className={sidebarCollapsed ? 'lg:hidden' : ''}>
+            <h1 className="text-xl font-bold text-accent">{brand} Admin</h1>
+            <p className="text-xs font-bold uppercase tracking-widest text-foose-muted">Management Suite</p>
+          </div>
+          <button
+            aria-label={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            className={`hidden size-11 shrink-0 items-center justify-center rounded-lg border border-foose-border bg-foose-surface text-foose-muted transition hover:border-accent hover:text-accent lg:inline-flex ${
+              sidebarCollapsed ? '' : 'ml-auto'
+            }`}
+            onClick={() => setSidebarCollapsed((current) => !current)}
+            title={sidebarCollapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+            type="button"
+          >
+            {sidebarCollapsed ? <TbLayoutSidebarRightCollapse size={22} /> : <TbLayoutSidebarLeftCollapse size={22} />}
+          </button>
         </div>
-        <nav>
-          {NAV.map((item) => (
-            <a className={section === item.key ? 'active' : ''} href={withBasePath(item.href)} key={item.key}>
-              <Icon name={item.icon} /> {item.label}
+
+        <button
+          aria-expanded={menuOpen}
+          aria-label="Open admin menu"
+          className="ml-auto inline-flex size-11 items-center justify-center rounded-lg border border-foose-border bg-foose-surface text-foose-text transition hover:border-accent hover:text-accent lg:hidden"
+          onClick={() => setMenuOpen(true)}
+          type="button"
+        >
+          <Icon name="menu" />
+        </button>
+
+        <nav className={`hidden flex-col gap-2 lg:flex ${sidebarCollapsed ? 'lg:items-center' : ''}`}>
+          {allowedNav.map((item) => (
+            <a
+              className={`flex items-center gap-3 rounded-lg text-sm font-semibold transition ${
+                sidebarCollapsed ? 'size-11 justify-center p-0' : 'px-4 py-3'
+              } ${section === item.key ? 'bg-accent text-white' : 'text-foose-muted hover:bg-accent-light hover:text-accent'}`}
+              href={withBasePath(item.href)}
+              key={item.key}
+              title={item.label}
+            >
+              <Icon name={item.icon} />
+              <span className={sidebarLabelClass}>{item.label}</span>
             </a>
           ))}
         </nav>
-        <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-primary border-accent bg-accent text-white shadow-md shadow-accent/15 hover:bg-accent-hover" type="button">
-          Generate Report
+
+        <button
+          className={`button-primary hidden items-center gap-2 rounded-lg border border-accent bg-accent text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover lg:inline-flex ${
+            sidebarCollapsed ? 'size-11 justify-center p-0' : 'min-h-11 justify-center px-5 py-2.5'
+          }`}
+          title="Generate Report"
+          type="button"
+        >
+          <Icon name="chart" />
+          <span className={sidebarLabelClass}>Generate Report</span>
         </button>
-        <footer>
-          <a href={withBasePath('/admin')}>
-            <Icon name="shield" /> Security
+
+        <footer className={`hidden border-t border-foose-border pt-4 lg:block ${sidebarCollapsed ? 'w-full' : ''}`}>
+          <a
+            className={`flex items-center gap-3 rounded-lg text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent ${
+              sidebarCollapsed ? 'mx-auto size-11 justify-center p-0' : 'px-4 py-3'
+            }`}
+            href={withBasePath('/admin')}
+            title="Security"
+          >
+            <Icon name="shield" />
+            <span className={sidebarLabelClass}>Security</span>
           </a>
-          <button className="admin-footer-action" onClick={() => void logout()} type="button">
-            <Icon name="arrow" /> Log Out
+          <button
+            className={`admin-footer-action mt-2 flex w-full items-center gap-3 rounded-lg text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent ${
+              sidebarCollapsed ? 'mx-auto size-11 justify-center p-0' : 'px-4 py-3'
+            }`}
+            onClick={requestLogout}
+            title="Log Out"
+            type="button"
+          >
+            <Icon name="arrow" />
+            <span className={sidebarLabelClass}>Log Out</span>
           </button>
         </footer>
       </aside>
+
+      {menuOpen && (
+        <div aria-modal="true" className="fixed inset-0 z-50 lg:hidden" role="dialog">
+          <button aria-label="Close admin menu" className="absolute inset-0 bg-foose-text/45" onClick={closeMenu} type="button" />
+          <aside className="relative ml-auto flex h-full w-[min(22rem,calc(100%-2rem))] flex-col border-l border-foose-border bg-foose-surface p-4 shadow-2xl">
+            <div className="flex items-start justify-between gap-4 border-b border-foose-border pb-4">
+              <div>
+                <h2 className="text-xl font-bold text-accent">{brand} Admin</h2>
+                <p className="mt-1 text-xs font-bold uppercase tracking-widest text-foose-muted">Management Suite</p>
+              </div>
+              <button
+                aria-label="Close admin menu"
+                className="inline-flex size-10 items-center justify-center rounded-lg border border-foose-border bg-foose-surface text-foose-text transition hover:border-accent hover:text-accent"
+                onClick={closeMenu}
+                type="button"
+              >
+                <Icon name="x" />
+              </button>
+            </div>
+
+            <nav className="mt-4 grid gap-2">
+              {allowedNav.map((item) => (
+                <a
+                  className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold transition ${
+                    section === item.key ? 'bg-accent text-white' : 'text-foose-muted hover:bg-accent-light hover:text-accent'
+                  }`}
+                  href={withBasePath(item.href)}
+                  key={item.key}
+                  onClick={closeMenu}
+                >
+                  <Icon name={item.icon} /> {item.label}
+                </a>
+              ))}
+            </nav>
+
+            <button
+              className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover"
+              type="button"
+            >
+              <Icon name="chart" /> Generate Report
+            </button>
+
+            <div className="mt-auto border-t border-foose-border pt-4">
+              <a
+                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent"
+                href={withBasePath('/admin')}
+                onClick={closeMenu}
+              >
+                <Icon name="shield" /> Security
+              </a>
+              <button
+                className="mt-2 flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent"
+                onClick={requestLogout}
+                type="button"
+              >
+                <Icon name="arrow" /> Log Out
+              </button>
+            </div>
+          </aside>
+        </div>
+      )}
+
+      <LogoutConfirmDialog onCancel={cancelLogout} onConfirm={confirmLogout} open={logoutConfirmOpen} />
+
       <main className="admin-main min-w-0">
-        <header className="admin-top sticky top-0 z-30 border-b border-foose-border bg-foose-surface/95 p-4 backdrop-blur [&_label]:flex [&_label]:h-11 [&_label]:w-full [&_label]:max-w-md [&_label]:items-center [&_label]:gap-3 [&_label]:rounded-lg [&_label]:bg-foose-surface-mid [&_label]:px-4 [&_input]:flex-1 [&_input]:border-0 [&_input]:bg-transparent [&_input]:p-0 [&_input]:focus:ring-0">
-          <label>
+        <header className="admin-top sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-foose-border bg-foose-surface/95 p-4 backdrop-blur">
+          <label className="flex h-11 w-full max-w-md items-center gap-3 rounded-lg bg-foose-surface-mid px-4">
             <Icon name="search" />
-            <input placeholder={section === 'disputes' ? 'Search disputes...' : 'Search marketplace...'} />
+            <input className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm outline-none" placeholder={searchPlaceholder(section)} />
           </label>
-          <div>
+          <div className="flex items-center gap-3 text-foose-muted">
             <Icon name="bell" />
             <Icon name="info" />
             {user?.profilePhoto ? (
-              <img alt="" src={user.profilePhoto} />
+              <img alt="" className="size-10 rounded-full object-cover" src={user.profilePhoto} />
             ) : (
               <span className="admin-avatar-fallback inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">{initials(user?.name)}</span>
             )}

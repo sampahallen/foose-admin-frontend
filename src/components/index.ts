@@ -1,5 +1,6 @@
 export * from './admin/AdminShell'
 export * from './auth/AuthRequired'
+export * from './auth/LogoutConfirmDialog'
 export * from './feedback/EmptyState'
 export * from './feedback/ErrorState'
 export * from './feedback/LoadingState'

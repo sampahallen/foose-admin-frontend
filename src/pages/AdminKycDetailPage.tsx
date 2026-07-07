@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { AdminShell, Badge, ButtonLink, EmptyState, ErrorState, Icon, LoadingState } from '../components'
+import { roleLabels } from '../constants/roles'
 import { useApiResource } from '../hooks/useApiResource'
 import { apiPut } from '../lib/api'
 import type { KycRecord, User } from '../types/api'
@@ -7,9 +8,10 @@ import { getErrorMessage } from '../utils/errorMessage'
 import { formatDateTime, initials } from '../utils/format'
 import { getCurrentAppPathname, withBasePath } from '../utils/navigation'
 
-type KycDetail = KycRecord & {
+type KycDetail = Omit<KycRecord, 'reviewedBy' | 'userId'> & {
   _id: string
-  userId?: User | string
+  reviewedBy?: User | string | null
+  userId?: User | string | null
 }
 
 const STATUS_TONE = {
@@ -24,22 +26,26 @@ function currentKycId() {
   return match ? decodeURIComponent(match[1]).trim() : ''
 }
 
-function getUserName(user?: User | string) {
+function isUserObject(user?: User | string | null): user is User {
+  return Boolean(user && typeof user === 'object')
+}
+
+function getUserName(user?: User | string | null) {
   if (!user) return 'Unknown seller'
   return typeof user === 'string' ? user : user.name
 }
 
-function getUserEmail(user?: User | string) {
-  return typeof user === 'object' ? user.email : undefined
+function getUserEmail(user?: User | string | null) {
+  return isUserObject(user) ? user.email : undefined
 }
 
-function getUserPhone(user?: User | string) {
-  return typeof user === 'object' ? user.phone : undefined
+function getUserPhone(user?: User | string | null) {
+  return isUserObject(user) ? user.phone : undefined
 }
 
-function getUserMeta(user?: User | string) {
-  if (typeof user !== 'object') return []
-  return [user.username ? `@${user.username}` : undefined, user.role].filter(Boolean)
+function getUserMeta(user?: User | string | null) {
+  if (!isUserObject(user)) return []
+  return [user.username ? `@${user.username}` : undefined, ...roleLabels(user.roles, user.role)].filter(Boolean)
 }
 
 function DocumentPreview({ title, url }: { title: string; url?: string }) {
