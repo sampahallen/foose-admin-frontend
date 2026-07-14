@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { AdminShell, Badge, ButtonLink, EmptyState, ErrorState, Icon, LoadingState } from '../components'
+import { AdminShell, Badge, ButtonLink, ConfirmDialog, EmptyState, ErrorState, Icon, LoadingState } from '../components'
 import { roleLabels } from '../constants/roles'
 import { useApiResource } from '../hooks/useApiResource'
 import { apiPut } from '../lib/api'
@@ -13,6 +13,13 @@ type KycDetail = Omit<KycRecord, 'reviewedBy' | 'userId'> & {
   reviewedBy?: User | string | null
   userId?: User | string | null
 }
+
+type PreviewImage = {
+  title: string
+  url: string
+}
+
+type KycAction = 'approve' | 'reject'
 
 const STATUS_TONE = {
   approved: 'success',
@@ -48,21 +55,66 @@ function getUserMeta(user?: User | string | null) {
   return [user.username ? `@${user.username}` : undefined, ...roleLabels(user.roles, user.role)].filter(Boolean)
 }
 
-function DocumentPreview({ title, url }: { title: string; url?: string }) {
+function DocumentPreview({
+  onPreview,
+  title,
+  url,
+}: {
+  onPreview: (image: PreviewImage) => void
+  title: string
+  url?: string
+}) {
   return (
-    <article className="kyc-document-card rounded-xl border border-foose-border bg-foose-surface shadow-sm p-4 md:p-5">
-      <header>
-        <strong>{title}</strong>
+    <article className="kyc-document-card h-full rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5">
+      <header className="mb-3 flex items-center justify-between gap-3">
+        <strong className="text-sm font-bold text-foose-text">{title}</strong>
         {url && (
-          <a href={url} rel="noreferrer" target="_blank">
+          <a className="shrink-0 text-xs font-bold text-accent hover:text-accent-hover" href={url} rel="noreferrer" target="_blank">
             Open image
           </a>
         )}
       </header>
-      <div className="kyc-document-image overflow-hidden rounded-lg bg-foose-surface-mid [&_img]:h-full [&_img]:w-full [&_img]:object-cover image-frame">
-        {url ? <img alt={title} src={url} /> : <span className="image-placeholder flex min-h-32 items-center justify-center bg-foose-surface-mid text-sm font-semibold text-foose-faint">No image submitted</span>}
-      </div>
+      {url ? (
+        <button
+          aria-label={`Preview ${title}`}
+          className="block w-full overflow-hidden rounded-lg border border-foose-border bg-foose-surface-low text-left transition hover:border-accent focus:border-accent focus:outline-none focus:ring-4 focus:ring-accent/10"
+          onClick={() => onPreview({ title, url })}
+          type="button"
+        >
+          <span className="flex aspect-[4/3] w-full items-center justify-center bg-foose-surface-mid p-2 sm:aspect-[3/2]">
+            <img alt={title} className="max-h-full max-w-full rounded-md object-contain" src={url} />
+          </span>
+        </button>
+      ) : (
+        <span className="image-placeholder flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-foose-surface-mid text-sm font-semibold text-foose-faint sm:aspect-[3/2]">
+          No image submitted
+        </span>
+      )}
     </article>
+  )
+}
+
+function ImagePreviewModal({ onClose, preview }: { onClose: () => void; preview: PreviewImage }) {
+  return (
+    <div aria-label={`${preview.title} preview`} aria-modal="true" className="fixed inset-0 z-[100] flex items-center justify-center p-3 sm:p-6" role="dialog">
+      <button aria-label="Close image preview" className="absolute inset-0 bg-black/75" onClick={onClose} type="button" />
+      <article className="relative z-10 w-full max-w-6xl">
+        <div className="mb-3 flex items-center justify-between gap-3 text-white">
+          <h2 className="text-base font-bold sm:text-lg">{preview.title}</h2>
+          <button
+            aria-label="Close image preview"
+            className="inline-flex size-10 shrink-0 items-center justify-center rounded-full border border-white/30 bg-black/40 text-white transition hover:bg-black/60 focus:outline-none focus:ring-4 focus:ring-white/20"
+            onClick={onClose}
+            type="button"
+          >
+            <Icon name="x" size={18} />
+          </button>
+        </div>
+        <div className="rounded-xl bg-white p-2 shadow-2xl">
+          <img alt={preview.title} className="max-h-[78dvh] w-full rounded-lg object-contain sm:max-h-[82dvh]" src={preview.url} />
+        </div>
+      </article>
+    </div>
   )
 }
 
@@ -71,40 +123,55 @@ export function AdminKycDetailPage() {
   const resource = useApiResource<{ kyc: KycDetail }>(kycId ? `/admin/kyc/${kycId}` : null)
   const [actionError, setActionError] = useState('')
   const [busyAction, setBusyAction] = useState('')
-
-  async function approve() {
-    if (!kycId) return
-    setActionError('')
-    setBusyAction('approve')
-    try {
-      await apiPut(`/admin/kyc/${kycId}/approve`)
-      await resource.refetch()
-    } catch (requestError) {
-      setActionError(getErrorMessage(requestError, 'Unable to approve KYC submission'))
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  async function reject() {
-    if (!kycId) return
-    const reason = window.prompt('Reason for rejection')
-    if (!reason) return
-    setActionError('')
-    setBusyAction('reject')
-    try {
-      await apiPut(`/admin/kyc/${kycId}/reject`, { reason })
-      await resource.refetch()
-    } catch (requestError) {
-      setActionError(getErrorMessage(requestError, 'Unable to reject KYC submission'))
-    } finally {
-      setBusyAction('')
-    }
-  }
+  const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null)
+  const [kycAction, setKycAction] = useState<KycAction | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [actionDialogError, setActionDialogError] = useState('')
 
   const kyc = resource.data?.kyc
   const sellerName = getUserName(kyc?.userId)
   const userMeta = getUserMeta(kyc?.userId)
+
+  function requestKycAction(action: KycAction) {
+    setActionError('')
+    setActionDialogError('')
+    setRejectReason('')
+    setKycAction(action)
+  }
+
+  function cancelKycAction() {
+    if (busyAction) return
+    setActionDialogError('')
+    setRejectReason('')
+    setKycAction(null)
+  }
+
+  async function confirmKycAction() {
+    if (!kycId || !kycAction) return
+    const reason = rejectReason.trim()
+
+    setActionError('')
+    setActionDialogError('')
+    setBusyAction(kycAction)
+    try {
+      if (kycAction === 'approve') {
+        await apiPut(`/admin/kyc/${kycId}/approve`)
+      } else {
+        await apiPut(`/admin/kyc/${kycId}/reject`, { reason })
+      }
+      await resource.refetch()
+      setKycAction(null)
+      setRejectReason('')
+    } catch (requestError) {
+      setActionDialogError(
+        getErrorMessage(requestError, kycAction === 'approve' ? 'Unable to approve KYC submission' : 'Unable to reject KYC submission'),
+      )
+    } finally {
+      setBusyAction('')
+    }
+  }
+
+  const kycActionIdNo = kyc?.idNo || 'Not provided'
 
   return (
     <AdminShell section="kyc">
@@ -125,10 +192,10 @@ export function AdminKycDetailPage() {
               </div>
               <div className="button-row flex flex-wrap items-center gap-3">
                 <Badge tone={STATUS_TONE[kyc.status]}>{kyc.status.replace('_', ' ')}</Badge>
-                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-primary border-accent bg-accent text-white shadow-md shadow-accent/15 hover:bg-accent-hover" disabled={busyAction === 'approve'} onClick={() => void approve()} type="button">
+                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-primary border-accent bg-accent text-white shadow-md shadow-accent/15 hover:bg-accent-hover" disabled={busyAction === 'approve'} onClick={() => requestKycAction('approve')} type="button">
                   {busyAction === 'approve' ? 'Approving...' : 'Approve'}
                 </button>
-                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-secondary border-foose-border bg-foose-surface text-foose-text hover:border-accent hover:text-accent" disabled={busyAction === 'reject'} onClick={() => void reject()} type="button">
+                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-secondary border-foose-border bg-foose-surface text-foose-text hover:border-accent hover:text-accent" disabled={busyAction === 'reject'} onClick={() => requestKycAction('reject')} type="button">
                   {busyAction === 'reject' ? 'Rejecting...' : 'Reject'}
                 </button>
               </div>
@@ -198,9 +265,9 @@ export function AdminKycDetailPage() {
               </section>
             </div>
 
-            <section className="kyc-documents grid gap-6">
-              <DocumentPreview title="Submitted ID document" url={kyc.idImgUrl} />
-              <DocumentPreview title="Submitted selfie" url={kyc.selfieImgUrl} />
+            <section className="kyc-documents grid gap-5 md:grid-cols-2">
+              <DocumentPreview onPreview={setPreviewImage} title="Submitted ID document" url={kyc.idImgUrl} />
+              <DocumentPreview onPreview={setPreviewImage} title="Submitted selfie" url={kyc.selfieImgUrl} />
             </section>
 
             <div className="form-actions flex flex-wrap items-center gap-3">
@@ -211,6 +278,62 @@ export function AdminKycDetailPage() {
           </>
         )}
       </section>
+      {kycAction && (
+        <ConfirmDialog
+          cancelDisabled={Boolean(busyAction)}
+          confirmDisabled={Boolean(busyAction)}
+          confirmLabel={
+            busyAction
+              ? kycAction === 'approve'
+                ? 'Approving...'
+                : 'Rejecting...'
+              : kycAction === 'approve'
+                ? 'Approve KYC'
+                : 'Reject KYC'
+          }
+          description={`Are you sure you want to ${kycAction} KYC for user ${sellerName} of ID No. ${kycActionIdNo}?`}
+          onCancel={cancelKycAction}
+          onConfirm={() => void confirmKycAction()}
+          open={Boolean(kycAction)}
+          title={kycAction === 'approve' ? 'Approve KYC?' : 'Reject KYC?'}
+          tone={kycAction === 'approve' ? 'success' : 'danger'}
+        >
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-lg bg-foose-surface-low p-3 text-sm sm:grid-cols-2">
+              <div>
+                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">Seller</span>
+                <strong className="mt-1 block text-foose-text">{sellerName}</strong>
+              </div>
+              <div>
+                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">ID No.</span>
+                <strong className="mt-1 block text-foose-text">{kycActionIdNo}</strong>
+              </div>
+            </div>
+
+            {kycAction === 'reject' && (
+              <label className="text-sm font-semibold text-foose-text">
+                Rejection reason optional
+                <textarea
+                  className="mt-2 min-h-28 w-full resize-y rounded-lg border border-foose-border bg-white px-3 py-3 text-sm font-medium text-foose-text outline-none transition placeholder:text-foose-faint focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  onChange={(event) => {
+                    setRejectReason(event.target.value)
+                    setActionDialogError('')
+                  }}
+                  placeholder="Explain what the seller needs to fix."
+                  value={rejectReason}
+                />
+              </label>
+            )}
+
+            {actionDialogError && (
+              <p className="rounded-lg border border-foose-danger/30 bg-foose-danger-bg px-3 py-2 text-sm font-semibold text-foose-danger">
+                {actionDialogError}
+              </p>
+            )}
+          </div>
+        </ConfirmDialog>
+      )}
+      {previewImage && <ImagePreviewModal onClose={() => setPreviewImage(null)} preview={previewImage} />}
     </AdminShell>
   )
 }

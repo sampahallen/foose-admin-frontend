@@ -1,5 +1,5 @@
 import { useMemo, useState, type FormEvent } from 'react'
-import { AdminShell, Badge, EmptyState, ErrorState, Icon, LoadingState, StatCard } from '../components'
+import { AdminShell, Badge, ConfirmDialog, EmptyState, ErrorState, Icon, LoadingState, StatCard } from '../components'
 import { useApiResource } from '../hooks/useApiResource'
 import { apiPut } from '../lib/api'
 import type { KycRecord, PaginatedKycRecords, User } from '../types/api'
@@ -26,6 +26,12 @@ type IdTypeFilter = '' | 'Ghana Card' | 'Passport' | 'Driving License'
 type PhoneVerifiedFilter = '' | 'true' | 'false'
 type ReviewedWithinFilter = '' | '7' | '30' | '90'
 type AcceptedSort = 'newest' | 'oldest'
+type KycAction = 'approve' | 'reject'
+
+type KycActionRequest = {
+  action: KycAction
+  record: PendingKyc
+}
 
 const ACCEPTED_PREVIEW_SIZE = 5
 const ACCEPTED_PAGE_SIZE = 50
@@ -124,8 +130,8 @@ function AcceptedKycPreviewPanel({
   total: number
 }) {
   return (
-    <aside className="rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm xl:sticky xl:top-24 xl:self-start">
-      <div className="mb-4 flex items-start justify-between gap-3">
+    <aside className="rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm xl:sticky xl:top-24 xl:self-start">
+      <div className="mb-5 flex items-start justify-between gap-4">
         <div>
           <h2 className="text-lg font-bold text-foose-text">Previously accepted KYCs</h2>
           <p className="mt-1 text-sm leading-6 text-foose-muted">Latest approved seller verifications.</p>
@@ -142,7 +148,7 @@ function AcceptedKycPreviewPanel({
       )}
 
       {!!records.length && (
-        <div className="space-y-3">
+        <div className="space-y-4">
           {records.map((record) => {
             const sellerName = getUserName(record.userId)
             return (
@@ -171,7 +177,7 @@ function AcceptedKycPreviewPanel({
       )}
 
       <button
-        className="mt-4 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-center text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover"
+        className="mt-5 inline-flex min-h-11 w-full items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-center text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover"
         onClick={onViewAll}
         type="button"
       >
@@ -197,6 +203,9 @@ export function AdminKycPage() {
   const [phoneVerifiedFilter, setPhoneVerifiedFilter] = useState<PhoneVerifiedFilter>('')
   const [reviewedWithinFilter, setReviewedWithinFilter] = useState<ReviewedWithinFilter>('')
   const [acceptedSort, setAcceptedSort] = useState<AcceptedSort>('newest')
+  const [kycActionRequest, setKycActionRequest] = useState<KycActionRequest | null>(null)
+  const [rejectReason, setRejectReason] = useState('')
+  const [actionDialogError, setActionDialogError] = useState('')
 
   const acceptedPath = useMemo(
     () =>
@@ -213,31 +222,44 @@ export function AdminKycPage() {
   )
   const acceptedRecords = useApiResource<AcceptedKycResponse>(showAcceptedAll ? acceptedPath : null, showAcceptedAll)
 
-  async function approve(id: string) {
+  function requestKycAction(action: KycAction, record: PendingKyc) {
     setActionError('')
-    setBusyId(`approve:${id}`)
+    setActionDialogError('')
+    setRejectReason('')
+    setKycActionRequest({ action, record })
+  }
+
+  function cancelKycAction() {
+    if (kycActionRequest && busyId === `${kycActionRequest.action}:${kycActionRequest.record._id}`) return
+    setActionDialogError('')
+    setRejectReason('')
+    setKycActionRequest(null)
+  }
+
+  async function confirmKycAction() {
+    if (!kycActionRequest) return
+    const { action, record } = kycActionRequest
+    const id = record._id
+    const reason = rejectReason.trim()
+
+    setActionError('')
+    setActionDialogError('')
+    setBusyId(`${action}:${id}`)
     try {
-      await apiPut(`/admin/kyc/${id}/approve`)
+      if (action === 'approve') {
+        await apiPut(`/admin/kyc/${id}/approve`)
+      } else {
+        await apiPut(`/admin/kyc/${id}/reject`, { reason })
+      }
       await records.refetch()
       await acceptedPreview.refetch()
       await acceptedRecords.refetch()
+      setKycActionRequest(null)
+      setRejectReason('')
     } catch (requestError) {
-      setActionError(getErrorMessage(requestError, 'Unable to approve KYC submission'))
-    } finally {
-      setBusyId('')
-    }
-  }
-
-  async function reject(id: string) {
-    const reason = window.prompt('Reason for rejection')
-    if (!reason) return
-    setActionError('')
-    setBusyId(`reject:${id}`)
-    try {
-      await apiPut(`/admin/kyc/${id}/reject`, { reason })
-      await records.refetch()
-    } catch (requestError) {
-      setActionError(getErrorMessage(requestError, 'Unable to reject KYC submission'))
+      setActionDialogError(
+        getErrorMessage(requestError, action === 'approve' ? 'Unable to approve KYC submission' : 'Unable to reject KYC submission'),
+      )
     } finally {
       setBusyId('')
     }
@@ -274,11 +296,14 @@ export function AdminKycPage() {
   const hasAcceptedFilters = Boolean(
     acceptedSearch || searchDraft || idTypeFilter || phoneVerifiedFilter || reviewedWithinFilter || acceptedSort !== 'newest',
   )
+  const kycActionBusy = kycActionRequest ? busyId === `${kycActionRequest.action}:${kycActionRequest.record._id}` : false
+  const kycActionSeller = kycActionRequest ? getUserName(kycActionRequest.record.userId) : ''
+  const kycActionIdNo = kycActionRequest?.record.idNo || 'Not provided'
 
   return (
     <AdminShell section="kyc">
       <section className="admin-page p-4 md:p-6 lg:p-8">
-        <div className="admin-title mb-5 flex flex-col gap-3 md:flex-row md:items-center md:justify-between [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:md:text-4xl [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foose-muted [&_p]:md:text-base max-md:[&_h1]:text-2xl">
+        <div className="admin-title mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:md:text-4xl [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foose-muted [&_p]:md:text-base max-md:[&_h1]:text-2xl">
           <div>
             <h1>{showAcceptedAll ? 'Accepted KYC records' : 'KYC reviews'}</h1>
             <p>
@@ -287,15 +312,15 @@ export function AdminKycPage() {
                 : 'Pending identity records awaiting admin action.'}
             </p>
           </div>
-          <div className="admin-mini-stats grid gap-3 sm:grid-cols-2">
+          <div className="admin-mini-stats grid w-full gap-4 sm:grid-cols-2 md:w-auto">
             <StatCard icon="shield" label="Pending Verifications" value={String(pendingRecords.length)} note="Awaiting review" />
             <StatCard icon="check" label="Accepted Records" value={String(acceptedPreview.data?.total || 0)} note="Previously approved" />
           </div>
         </div>
 
         {showAcceptedAll ? (
-          <div className="space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
+          <div className="space-y-6">
+            <div className="flex flex-wrap items-center justify-between gap-4">
               <button
                 className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-foose-border bg-foose-surface px-5 py-2.5 text-center text-sm font-bold text-foose-text transition hover:border-accent hover:text-accent"
                 onClick={() => setShowAcceptedAll(false)}
@@ -309,7 +334,7 @@ export function AdminKycPage() {
             </div>
 
             <form
-              className="grid gap-3 rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm lg:grid-cols-[minmax(220px,1fr)_180px_180px_180px_150px_auto]"
+              className="grid gap-4 rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm lg:grid-cols-[minmax(220px,1fr)_180px_180px_180px_150px_auto]"
               onSubmit={submitAcceptedSearch}
             >
               <label className="text-sm font-semibold text-foose-text">
@@ -383,7 +408,7 @@ export function AdminKycPage() {
                   <option value="oldest">Oldest</option>
                 </select>
               </label>
-              <div className="flex items-end gap-2">
+              <div className="flex items-end gap-3">
                 <button
                   className="inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-center text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover"
                   type="submit"
@@ -408,7 +433,7 @@ export function AdminKycPage() {
               <EmptyState body="Try a different search term or loosen the filters." title="No accepted KYC records found" />
             )}
             {!!acceptedRecords.data?.records.length && (
-              <div className="overflow-x-auto rounded-xl border border-foose-border bg-foose-surface">
+              <div className="overflow-x-auto rounded-xl border border-foose-border bg-foose-surface shadow-sm">
                 <table className="sharp-table w-full min-w-[980px] border-collapse text-left text-sm [&_th]:border-b [&_th]:border-foose-border [&_th]:px-4 [&_th]:py-3 [&_th]:align-middle [&_td]:border-b [&_td]:border-foose-border [&_td]:px-4 [&_td]:py-3 [&_td]:align-middle [&_th]:bg-foose-surface-mid [&_th]:text-xs [&_th]:font-bold [&_th]:uppercase [&_th]:tracking-widest [&_th]:text-foose-muted">
                   <thead>
                     <tr>
@@ -489,8 +514,8 @@ export function AdminKycPage() {
             )}
           </div>
         ) : (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_380px]">
-            <div className="min-w-0">
+          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
+            <div className="min-w-0 space-y-4">
               {records.loading && <LoadingState label="Loading KYC records..." />}
               {records.error && <ErrorState message={records.error} retry={records.refetch} />}
               {actionError && <ErrorState message={actionError} />}
@@ -498,7 +523,7 @@ export function AdminKycPage() {
                 <EmptyState body="No pending KYC submissions are waiting for review." title="KYC queue is clear" />
               )}
               {!!pendingRecords.length && (
-                <div className="overflow-x-auto rounded-xl border border-foose-border bg-foose-surface">
+                <div className="overflow-x-auto rounded-xl border border-foose-border bg-foose-surface shadow-sm">
                   <table className="sharp-table w-full min-w-[860px] border-collapse text-left text-sm [&_th]:border-b [&_th]:border-foose-border [&_th]:px-4 [&_th]:py-3 [&_th]:align-middle [&_td]:border-b [&_td]:border-foose-border [&_td]:px-4 [&_td]:py-3 [&_td]:align-middle [&_th]:bg-foose-surface-mid [&_th]:text-xs [&_th]:font-bold [&_th]:uppercase [&_th]:tracking-widest [&_th]:text-foose-muted admin-table [&_td:first-child]:font-bold">
                     <thead>
                       <tr>
@@ -542,7 +567,7 @@ export function AdminKycPage() {
                               <button
                                 className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-center text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover disabled:pointer-events-none disabled:opacity-50"
                                 disabled={busyId === `approve:${record._id}`}
-                                onClick={() => void approve(record._id)}
+                                onClick={() => requestKycAction('approve', record)}
                                 type="button"
                               >
                                 {busyId === `approve:${record._id}` ? 'Approving...' : 'Approve'}
@@ -550,7 +575,7 @@ export function AdminKycPage() {
                               <button
                                 className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-foose-border bg-foose-surface px-5 py-2.5 text-center text-sm font-bold text-foose-text transition hover:border-accent hover:text-accent disabled:pointer-events-none disabled:opacity-50"
                                 disabled={busyId === `reject:${record._id}`}
-                                onClick={() => void reject(record._id)}
+                                onClick={() => requestKycAction('reject', record)}
                                 type="button"
                               >
                                 {busyId === `reject:${record._id}` ? 'Rejecting...' : 'Reject'}
@@ -574,6 +599,61 @@ export function AdminKycPage() {
           </div>
         )}
       </section>
+      {kycActionRequest && (
+        <ConfirmDialog
+          cancelDisabled={kycActionBusy}
+          confirmDisabled={kycActionBusy}
+          confirmLabel={
+            kycActionBusy
+              ? kycActionRequest.action === 'approve'
+                ? 'Approving...'
+                : 'Rejecting...'
+              : kycActionRequest.action === 'approve'
+                ? 'Approve KYC'
+                : 'Reject KYC'
+          }
+          description={`Are you sure you want to ${kycActionRequest.action} KYC for user ${kycActionSeller} of ID No. ${kycActionIdNo}?`}
+          onCancel={cancelKycAction}
+          onConfirm={() => void confirmKycAction()}
+          open={Boolean(kycActionRequest)}
+          title={kycActionRequest.action === 'approve' ? 'Approve KYC?' : 'Reject KYC?'}
+          tone={kycActionRequest.action === 'approve' ? 'success' : 'danger'}
+        >
+          <div className="grid gap-4">
+            <div className="grid gap-3 rounded-lg bg-foose-surface-low p-3 text-sm sm:grid-cols-2">
+              <div>
+                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">Seller</span>
+                <strong className="mt-1 block text-foose-text">{kycActionSeller}</strong>
+              </div>
+              <div>
+                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">ID No.</span>
+                <strong className="mt-1 block text-foose-text">{kycActionIdNo}</strong>
+              </div>
+            </div>
+
+            {kycActionRequest.action === 'reject' && (
+              <label className="text-sm font-semibold text-foose-text">
+                Rejection reason optional
+                <textarea
+                  className="mt-2 min-h-28 w-full resize-y rounded-lg border border-foose-border bg-white px-3 py-3 text-sm font-medium text-foose-text outline-none transition placeholder:text-foose-faint focus:border-accent focus:ring-4 focus:ring-accent/10"
+                  onChange={(event) => {
+                    setRejectReason(event.target.value)
+                    setActionDialogError('')
+                  }}
+                  placeholder="Explain what the seller needs to fix."
+                  value={rejectReason}
+                />
+              </label>
+            )}
+
+            {actionDialogError && (
+              <p className="rounded-lg border border-foose-danger/30 bg-foose-danger-bg px-3 py-2 text-sm font-semibold text-foose-danger">
+                {actionDialogError}
+              </p>
+            )}
+          </div>
+        </ConfirmDialog>
+      )}
     </AdminShell>
   )
 }
