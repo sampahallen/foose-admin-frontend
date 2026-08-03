@@ -5,7 +5,7 @@ export function LoadingState({ label = 'Loading...', rows = 3 }: { label?: strin
     <div
       aria-busy="true"
       aria-live="polite"
-      className="state-panel mx-auto my-10 w-full max-w-3xl rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm"
+      className="mx-auto my-10 w-full max-w-3xl rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm"
       role="status"
     >
       <span className="sr-only">{label}</span>

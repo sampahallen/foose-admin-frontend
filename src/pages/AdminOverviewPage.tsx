@@ -1,257 +1,223 @@
-import type { ReactNode } from 'react'
-import {
-  Area,
-  AreaChart,
-  Bar,
-  BarChart,
-  CartesianGrid,
-  Cell,
-  Line,
-  LineChart,
-  Pie,
-  PieChart,
-  ResponsiveContainer,
-  Tooltip,
-  XAxis,
-  YAxis,
-} from 'recharts'
-import { AdminShell, ErrorState, LoadingState } from '../components'
+import { Area, AreaChart, Bar, BarChart, Cell, Line, LineChart, Tooltip, XAxis, YAxis } from 'recharts'
+import { AdminShell, ErrorState, LoadingState, MetricCard, PageHeader } from '../components'
+import { ChartFrame, ChartGrid, ChartTooltip, Meter, Sparkline, StatusBar, axisTickProps, compactCount, formatCount, titleCase } from '../components/charts'
+import { categoricalColor, statusColor } from '../constants/charts'
 import { getAppName } from '../config/env'
 import { useApiResource } from '../hooks/useApiResource'
 import type { AdminStats } from '../types/api'
 import { formatMoney } from '../utils/format'
-import { withBasePath } from '../utils/navigation'
 
-const CHART_COLORS = ['#2642fb', '#16833d', '#b45309', '#ba1a1a', '#0f766e', '#475569']
 const PENDING_ORDER_STATUSES = new Set(['pending', 'paid', 'processing', 'shipped'])
 
-function formatCount(value?: number) {
-  return new Intl.NumberFormat('en-US').format(value || 0)
+function moneyAxisTick(value: number) {
+  return compactCount(value / 100)
 }
 
-function compactCount(value: number) {
-  return new Intl.NumberFormat('en-US', { notation: 'compact' }).format(value)
+function bucketTotal(buckets: Array<{ count: number }>) {
+  return buckets.reduce((sum, bucket) => sum + bucket.count, 0)
 }
 
-function formatAxisDate(value: string) {
-  const date = new Date(`${value}T00:00:00`)
-  return new Intl.DateTimeFormat('en-US', { day: 'numeric', month: 'short' }).format(date)
+function bucketValue<T extends { count: number }>(buckets: T[], match: (bucket: T) => boolean) {
+  return buckets.filter(match).reduce((sum, bucket) => sum + bucket.count, 0)
 }
 
-function tooltipDateLabel(label: ReactNode) {
-  if (typeof label !== 'string') return label
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(label)) return label
-  return formatAxisDate(label)
+function moneyTooltipValue(dataKey: unknown) {
+  return (value: unknown) => (String(dataKey).toLowerCase().includes('revenue') ? formatMoney(Number(value) || 0) : formatCount(Number(value) || 0))
 }
 
-function countTooltip(value: unknown, name: unknown) {
-  return [formatCount(Number(value) || 0), String(name)]
-}
-
-function moneyTooltip(value: unknown, name: unknown) {
-  const metric = String(name)
-  return [metric.toLowerCase().includes('revenue') ? formatMoney(Number(value) || 0) : formatCount(Number(value) || 0), metric]
-}
-
-function titleCase(value: string) {
-  return value
-    .replace(/_/g, ' ')
-    .replace(/\b\w/g, (letter) => letter.toUpperCase())
-}
-
-function ChartCard({
-  children,
-  href,
-  note,
-  title,
-  value,
-}: {
-  children: ReactNode
-  href?: string
-  note: string
-  title: string
-  value: string
-}) {
-  const card = (
-    <article className="rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm">
-      <div className="mb-3 flex items-start justify-between gap-3">
-        <div>
-          <h2 className="text-sm font-bold uppercase tracking-wide text-foose-muted">{title}</h2>
-          <p className="mt-1 text-2xl font-bold text-foose-text">{value}</p>
-        </div>
-        <span className="rounded-lg bg-foose-surface-low px-3 py-1 text-xs font-bold text-foose-muted">{note}</span>
-      </div>
-      <div className="h-52 min-w-0">{children}</div>
-    </article>
-  )
-
-  if (!href) return card
-
+function SectionAnchor({ id, title }: { id: string; title: string }) {
   return (
-    <a
-      aria-label={`Open ${title}`}
-      className="group block rounded-xl outline-none transition hover:-translate-y-0.5 focus:ring-4 focus:ring-accent/10 [&_article]:transition [&_article]:group-hover:border-accent [&_article]:group-hover:shadow-md"
-      href={withBasePath(href)}
-    >
-      {card}
-    </a>
-  )
-}
-
-function EmptyChart() {
-  return (
-    <div className="flex h-full items-center justify-center rounded-lg bg-foose-surface-low text-sm font-semibold text-foose-muted">
-      No chart data yet.
-    </div>
+    <h2 className="mb-4 scroll-mt-24 text-lg font-bold text-foose-text" id={id}>
+      {title}
+    </h2>
   )
 }
 
 export function AdminOverviewPage() {
   const brand = getAppName()
   const stats = useApiResource<AdminStats>('/admin/stats')
+  const data = stats.data
 
   const pendingOrderData =
-    stats.data?.charts.orderStatus
+    data?.charts.orderStatus
       .filter((item) => PENDING_ORDER_STATUSES.has(String(item.status)))
       .map((item) => ({ ...item, status: titleCase(String(item.status)) })) || []
 
-  const pendingKycData =
-    stats.data?.charts.pendingKycByIdType.length
-      ? stats.data.charts.pendingKycByIdType
-      : stats.data?.pendingKyc
-        ? [{ count: stats.data.pendingKyc, idType: 'Pending' }]
-        : []
-
   return (
     <AdminShell section="overview">
-      <section className="admin-page p-4 md:p-6 lg:p-8">
-        <div className="admin-title mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:md:text-4xl [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foose-muted [&_p]:md:text-base max-md:[&_h1]:text-2xl">
-          <div>
-            <h1>Dashboard</h1>
-            <p>Operational snapshot for {brand}.</p>
-          </div>
-        </div>
+      <section className="p-4 md:p-6 lg:p-8">
+        <PageHeader
+          description={`Operational snapshot for ${brand}.`}
+          meta={
+            data && (
+              <nav aria-label="Dashboard sections" className="flex flex-wrap gap-x-4 gap-y-1 text-sm font-bold text-accent">
+                <a className="hover:underline" href="#users-growth">Users &amp; growth</a>
+                <a className="hover:underline" href="#marketplace">Marketplace</a>
+                <a className="hover:underline" href="#orders-revenue">Orders &amp; revenue</a>
+                <a className="hover:underline" href="#trust-safety">Trust &amp; safety</a>
+              </nav>
+            )
+          }
+          title="Dashboard"
+        />
 
-        {stats.loading && <LoadingState label="Loading dashboard..." rows={6} />}
-        {stats.error && <ErrorState message={stats.error} retry={stats.refetch} />}
-        {stats.data && (
-          <div className="grid gap-4 xl:grid-cols-2 2xl:grid-cols-4">
-            <ChartCard href="/admin/users" note="14 day growth" title="Users" value={formatCount(stats.data.users)}>
-              <ResponsiveContainer height="100%" width="100%">
-                <AreaChart data={stats.data.charts.userTrend} margin={{ bottom: 0, left: -20, right: 6, top: 8 }}>
-                  <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={formatAxisDate} tickLine={false} />
-                  <YAxis allowDecimals={false} tickFormatter={compactCount} tickLine={false} />
-                  <Tooltip formatter={countTooltip} labelFormatter={tooltipDateLabel} />
-                  <Area dataKey="users" fill="#e8ebff" name="New users" stroke="#2642fb" strokeWidth={2} type="monotone" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </ChartCard>
+        {stats.loading && !data && <LoadingState label="Loading dashboard..." rows={6} />}
+        {stats.error && !data && <ErrorState message={stats.error} retry={stats.refetch} />}
 
-            <ChartCard note="shop categories" title="DigiShops" value={formatCount(stats.data.shops)}>
-              {stats.data.charts.shopCategory.length ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <PieChart>
-                    <Tooltip formatter={countTooltip} />
-                    <Pie data={stats.data.charts.shopCategory} dataKey="count" innerRadius={42} nameKey="category" outerRadius={74} paddingAngle={4}>
-                      {stats.data.charts.shopCategory.map((entry, index) => (
-                        <Cell fill={CHART_COLORS[index % CHART_COLORS.length]} key={entry.category} />
-                      ))}
-                    </Pie>
-                  </PieChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </ChartCard>
+        {data && (
+          <div className="space-y-10">
+            {/* Headline */}
+            <div className="space-y-4">
+              <MetricCard chart={<Sparkline data={data.charts.revenueTrend} dataKey="revenue" tone={statusColor('approved')} />} chartHeight="sm" label="Revenue" note="Delivered orders, all time" size="lg" tone="success" value={formatMoney(data.revenue)} />
+              <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+                <MetricCard chart={<Sparkline data={data.charts.userTrend} dataKey="users" tone={categoricalColor(0)} />} href="/admin/users" icon="user" label="Users" value={formatCount(data.users)} />
+                <MetricCard chart={<Sparkline data={data.charts.shopTrend} dataKey="shops" tone={categoricalColor(2)} />} icon="store" label="DigiShops" value={formatCount(data.shops)} />
+                <MetricCard chart={<Sparkline data={data.charts.listingTrend} dataKey="listings" tone={categoricalColor(1)} />} icon="bag" label="Listings" value={formatCount(data.listings)} />
+                <MetricCard chart={<Sparkline data={data.charts.orderTrend} dataKey="orders" tone={categoricalColor(3)} />} icon="cart" label="Orders" value={formatCount(data.orders)} />
+              </div>
+              <div className="grid gap-4 sm:grid-cols-3">
+                <MetricCard href="/admin/kyc" icon="shield" label="Pending KYCs" note="Needs review" tone={data.pendingKyc > 0 ? 'warning' : 'default'} value={formatCount(data.pendingKyc)} />
+                <MetricCard icon="box" label="Pending orders" note="Order backlog" tone={data.pendingOrders > 0 ? 'warning' : 'default'} value={formatCount(data.pendingOrders)} />
+                <MetricCard href="/admin/disputes" icon="alert" label="Disputes" note="Awaiting review" tone={data.disputes > 0 ? 'danger' : 'default'} value={formatCount(data.disputes)} />
+              </div>
+            </div>
 
-            <ChartCard note="listing status" title="Listings" value={formatCount(stats.data.listings)}>
-              {stats.data.charts.listingStatus.length ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={stats.data.charts.listingStatus.map((item) => ({ ...item, status: titleCase(String(item.status)) }))} margin={{ bottom: 0, left: -18, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                    <XAxis dataKey="status" tickLine={false} />
-                    <YAxis allowDecimals={false} tickFormatter={compactCount} tickLine={false} />
-                    <Tooltip formatter={countTooltip} />
-                    <Bar dataKey="count" fill="#16833d" name="Listings" radius={[6, 6, 0, 0]} />
+            {/* Users & growth */}
+            <section>
+              <SectionAnchor id="users-growth" title="Users &amp; growth" />
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <ChartFrame className="xl:col-span-2" hasData={data.charts.userTrend.some((item) => item.users > 0)} title="New users">
+                  <AreaChart data={data.charts.userTrend} margin={{ bottom: 0, left: -20, right: 6, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis allowDecimals={false} tickFormatter={compactCount} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Area dataKey="users" fill={categoricalColor(0)} fillOpacity={0.12} name="New users" stroke={categoricalColor(0)} strokeWidth={2} type="monotone" />
+                  </AreaChart>
+                </ChartFrame>
+                <ChartFrame emptyMessage="No user accounts yet." hasData={data.charts.userStatus.length > 0} responsive={false} title="Account status">
+                  <StatusBar segments={data.charts.userStatus.map((item, index) => ({ color: categoricalColor(index), count: item.count, key: item.status, label: titleCase(item.status) }))} />
+                </ChartFrame>
+                <ChartFrame emptyMessage="No verification data yet." hasData={data.charts.userVerification.length > 0} responsive={false} title="Email verification">
+                  <Meter label="accounts verified" total={bucketTotal(data.charts.userVerification)} tone={statusColor('approved')} value={bucketValue(data.charts.userVerification, (item) => item.status === 'Email verified')} />
+                </ChartFrame>
+              </div>
+            </section>
+
+            {/* Marketplace */}
+            <section>
+              <SectionAnchor id="marketplace" title="Marketplace" />
+              <div className="grid gap-4 md:grid-cols-2">
+                <ChartFrame hasData={data.charts.shopTrend.some((item) => item.shops > 0)} height="sm" title="DigiShop growth">
+                  <AreaChart data={data.charts.shopTrend} margin={{ bottom: 0, left: -20, right: 6, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis allowDecimals={false} tickFormatter={compactCount} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Area dataKey="shops" fill={categoricalColor(2)} fillOpacity={0.12} name="Shops" stroke={categoricalColor(2)} strokeWidth={2} type="monotone" />
+                  </AreaChart>
+                </ChartFrame>
+                <ChartFrame hasData={data.charts.listingTrend.some((item) => item.listings > 0)} height="sm" title="Listing growth">
+                  <AreaChart data={data.charts.listingTrend} margin={{ bottom: 0, left: -20, right: 6, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis allowDecimals={false} tickFormatter={compactCount} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Area dataKey="listings" fill={categoricalColor(1)} fillOpacity={0.12} name="Listings" stroke={categoricalColor(1)} strokeWidth={2} type="monotone" />
+                  </AreaChart>
+                </ChartFrame>
+              </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2 xl:grid-cols-4">
+                <ChartFrame className="xl:col-span-2" emptyMessage="No shop categories yet." hasData={data.charts.shopCategory.length > 0} title="Shop categories">
+                  <BarChart data={data.charts.shopCategory.map((item) => ({ ...item, category: titleCase(String(item.category)) }))} layout="vertical" margin={{ bottom: 0, left: 28, right: 8, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis allowDecimals={false} type="number" {...axisTickProps} />
+                    <YAxis dataKey="category" type="category" width={104} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Bar dataKey="count" name="Shops" radius={[0, 6, 6, 0]}>
+                      {data.charts.shopCategory.map((entry, index) => <Cell fill={categoricalColor(index)} key={String(entry.category)} />)}
+                    </Bar>
                   </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </ChartCard>
+                </ChartFrame>
+                <ChartFrame emptyMessage="No listing type data yet." hasData={data.charts.listingType.length > 0} responsive={false} title="Retail vs wholesale">
+                  <StatusBar segments={data.charts.listingType.map((item, index) => ({ color: categoricalColor(index), count: item.count, key: String(item.type), label: titleCase(String(item.type)) }))} />
+                </ChartFrame>
+                <ChartFrame emptyMessage="No shop data yet." hasData={data.charts.shopLive.length > 0} responsive={false} title="Shops live">
+                  <Meter label="shops live" total={bucketTotal(data.charts.shopLive)} tone={statusColor('approved')} value={bucketValue(data.charts.shopLive, (item) => item.status === 'Live')} />
+                </ChartFrame>
+              </div>
+              <div className="mt-4">
+                <ChartFrame emptyMessage="No listings yet." hasData={data.charts.listingStatus.length > 0} responsive={false} title="Listing status">
+                  <StatusBar segments={data.charts.listingStatus.map((item, index) => ({ color: categoricalColor(index), count: item.count, key: String(item.status), label: titleCase(String(item.status)) }))} />
+                </ChartFrame>
+              </div>
+            </section>
 
-            <ChartCard note="delivered orders" title="Revenue" value={formatMoney(stats.data.revenue)}>
-              <ResponsiveContainer height="100%" width="100%">
-                <AreaChart data={stats.data.charts.revenueTrend} margin={{ bottom: 0, left: -18, right: 8, top: 8 }}>
-                  <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={formatAxisDate} tickLine={false} />
-                  <YAxis tickFormatter={(value) => compactCount(Number(value) / 100)} tickLine={false} />
-                  <Tooltip formatter={moneyTooltip} labelFormatter={tooltipDateLabel} />
-                  <Area dataKey="revenue" fill="#dff7e7" name="Revenue" stroke="#16833d" strokeWidth={2} type="monotone" />
-                </AreaChart>
-              </ResponsiveContainer>
-            </ChartCard>
+            {/* Orders & revenue */}
+            <section>
+              <SectionAnchor id="orders-revenue" title="Orders &amp; revenue" />
+              <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
+                <ChartFrame className="xl:col-span-2" hasData={data.charts.revenueTrend.some((item) => item.revenue > 0)} title="Revenue">
+                  <AreaChart data={data.charts.revenueTrend} margin={{ bottom: 0, left: -18, right: 8, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis tickFormatter={moneyAxisTick} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value, name) => moneyTooltipValue(name)(value)} />} />
+                    <Area dataKey="revenue" fill={statusColor('approved')} fillOpacity={0.12} name="Revenue" stroke={statusColor('approved')} strokeWidth={2} type="monotone" />
+                  </AreaChart>
+                </ChartFrame>
+                <ChartFrame hasData={data.charts.orderTrend.some((item) => item.orders > 0)} title="Order volume">
+                  <AreaChart data={data.charts.orderTrend} margin={{ bottom: 0, left: -20, right: 6, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis allowDecimals={false} tickFormatter={compactCount} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Area dataKey="orders" fill={categoricalColor(3)} fillOpacity={0.12} name="Orders" stroke={categoricalColor(3)} strokeWidth={2} type="monotone" />
+                  </AreaChart>
+                </ChartFrame>
+              </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <ChartFrame emptyMessage="No order backlog data yet." hasData={pendingOrderData.length > 0} responsive={false} title="Pending order backlog">
+                  <StatusBar segments={pendingOrderData.map((item, index) => ({ color: categoricalColor(index), count: item.count, key: String(item.status), label: item.status }))} />
+                </ChartFrame>
+                <ChartFrame emptyMessage="No order status data yet." hasData={data.charts.orderStatus.length > 0} responsive={false} title="Order status">
+                  <StatusBar segments={data.charts.orderStatus.map((item, index) => ({ color: categoricalColor(index), count: item.count, key: String(item.status), label: titleCase(String(item.status)) }))} />
+                </ChartFrame>
+              </div>
+            </section>
 
-            <ChartCard href="/admin/kyc" note="by ID type" title="Pending KYCs" value={formatCount(stats.data.pendingKyc)}>
-              {pendingKycData.length ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={pendingKycData} layout="vertical" margin={{ bottom: 0, left: 28, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                    <XAxis allowDecimals={false} tickFormatter={compactCount} type="number" />
-                    <YAxis dataKey="idType" tickLine={false} type="category" width={104} />
-                    <Tooltip formatter={countTooltip} />
-                    <Bar dataKey="count" fill="#b45309" name="Pending KYCs" radius={[0, 6, 6, 0]} />
+            {/* Trust & safety */}
+            <section>
+              <SectionAnchor id="trust-safety" title="Trust &amp; safety" />
+              <div className="grid gap-4 md:grid-cols-2">
+                <ChartFrame emptyMessage="No KYC submissions yet." hasData={data.charts.kycStatus.length > 0} href="/admin/kyc" responsive={false} title="KYC status">
+                  <StatusBar segments={data.charts.kycStatus.map((item) => ({ color: statusColor(String(item.status)), count: item.count, key: String(item.status), label: titleCase(String(item.status)) }))} />
+                </ChartFrame>
+                <ChartFrame emptyMessage="No pending KYCs." hasData={data.charts.pendingKycByIdType.length > 0} href="/admin/kyc" title="Pending KYC by ID type">
+                  <BarChart data={data.charts.pendingKycByIdType} layout="vertical" margin={{ bottom: 0, left: 28, right: 8, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis allowDecimals={false} type="number" {...axisTickProps} />
+                    <YAxis dataKey="idType" type="category" width={104} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Bar dataKey="count" fill={categoricalColor(1)} name="Pending KYCs" radius={[0, 6, 6, 0]} />
                   </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </ChartCard>
-
-            <ChartCard note="order backlog" title="Pending" value={formatCount(stats.data.pendingOrders)}>
-              {pendingOrderData.length ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={pendingOrderData} margin={{ bottom: 0, left: -18, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                    <XAxis dataKey="status" tickLine={false} />
-                    <YAxis allowDecimals={false} tickFormatter={compactCount} tickLine={false} />
-                    <Tooltip formatter={countTooltip} />
-                    <Bar dataKey="count" fill="#475569" name="Orders" radius={[6, 6, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </ChartCard>
-
-            <ChartCard href="/admin/disputes" note="14 day trend" title="Disputes" value={formatCount(stats.data.disputes)}>
-              <ResponsiveContainer height="100%" width="100%">
-                <LineChart data={stats.data.charts.disputeTrend} margin={{ bottom: 0, left: -20, right: 8, top: 8 }}>
-                  <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                  <XAxis dataKey="date" tickFormatter={formatAxisDate} tickLine={false} />
-                  <YAxis allowDecimals={false} tickFormatter={compactCount} tickLine={false} />
-                  <Tooltip formatter={countTooltip} labelFormatter={tooltipDateLabel} />
-                  <Line dataKey="disputes" dot={false} name="Disputes" stroke="#ba1a1a" strokeWidth={2} type="monotone" />
-                </LineChart>
-              </ResponsiveContainer>
-            </ChartCard>
-
-            <ChartCard note="order statuses" title="Orders" value={formatCount(stats.data.orders)}>
-              {stats.data.charts.orderStatus.length ? (
-                <ResponsiveContainer height="100%" width="100%">
-                  <BarChart data={stats.data.charts.orderStatus.map((item) => ({ ...item, status: titleCase(String(item.status)) }))} layout="vertical" margin={{ bottom: 0, left: 18, right: 8, top: 8 }}>
-                    <CartesianGrid stroke="#e2e1ef" strokeDasharray="3 3" />
-                    <XAxis allowDecimals={false} tickFormatter={compactCount} type="number" />
-                    <YAxis dataKey="status" tickLine={false} type="category" width={92} />
-                    <Tooltip formatter={countTooltip} />
-                    <Bar dataKey="count" fill="#2642fb" name="Orders" radius={[0, 6, 6, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              ) : (
-                <EmptyChart />
-              )}
-            </ChartCard>
+                </ChartFrame>
+              </div>
+              <div className="mt-4 grid gap-4 md:grid-cols-2">
+                <ChartFrame emptyMessage="No dispute activity yet." hasData={data.charts.disputeTrend.some((item) => item.disputes > 0)} href="/admin/disputes" title="Dispute trend">
+                  <LineChart data={data.charts.disputeTrend} margin={{ bottom: 0, left: -20, right: 8, top: 8 }}>
+                    <ChartGrid />
+                    <XAxis dataKey="date" {...axisTickProps} />
+                    <YAxis allowDecimals={false} tickFormatter={compactCount} {...axisTickProps} />
+                    <Tooltip content={<ChartTooltip formatValue={(value) => formatCount(Number(value))} />} />
+                    <Line dataKey="disputes" dot={false} name="Disputes" stroke={statusColor('disputed')} strokeWidth={2} type="monotone" />
+                  </LineChart>
+                </ChartFrame>
+                <ChartFrame emptyMessage="No dispute escrow data yet." hasData={data.charts.disputeEscrow.length > 0} href="/admin/disputes" responsive={false} title="Escrow held (disputes)">
+                  <Meter label="disputed orders with funds held" total={bucketTotal(data.charts.disputeEscrow)} tone={statusColor('held')} value={bucketValue(data.charts.disputeEscrow, (item) => String(item.escrowStatus).toLowerCase() === 'held')} />
+                </ChartFrame>
+              </div>
+            </section>
           </div>
         )}
       </section>

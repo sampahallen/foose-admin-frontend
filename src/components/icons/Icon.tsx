@@ -66,6 +66,19 @@ const icons = {
     </>
   ),
   chevron: <path d="m9 18 6-6-6-6" />,
+  download: (
+    <>
+      <path d="M12 4v12" />
+      <path d="m7 11 5 5 5-5" />
+      <path d="M5 20h14" />
+    </>
+  ),
+  eye: (
+    <>
+      <path d="M2 12s4-7 10-7 10 7 10 7-4 7-10 7-10-7-10-7Z" />
+      <circle cx="12" cy="12" r="3" />
+    </>
+  ),
   filter: (
     <>
       <path d="M4 6h16" />
@@ -142,6 +155,14 @@ const icons = {
       <path d="m9 12 2 2 4-5" />
     </>
   ),
+  sort: (
+    <>
+      <path d="m7 8 3-3 3 3" />
+      <path d="M10 5v14" />
+      <path d="m17 16-3 3-3-3" />
+      <path d="M14 19V5" />
+    </>
+  ),
   star: <path d="m12 3 2.7 5.5 6.1.9-4.4 4.3 1 6.1L12 17l-5.4 2.8 1-6.1-4.4-4.3 6.1-.9L12 3Z" />,
   store: (
     <>
@@ -178,6 +199,14 @@ const icons = {
       <path d="M5 21a7 7 0 0 1 14 0" />
     </>
   ),
+  users: (
+    <>
+      <circle cx="9" cy="8" r="3.5" />
+      <path d="M2.5 20a6.5 6.5 0 0 1 13 0" />
+      <path d="M15.5 5.5a3.5 3.5 0 0 1 0 6.8" />
+      <path d="M18 14.2a6.5 6.5 0 0 1 3.5 5.8" />
+    </>
+  ),
   wallet: (
     <>
       <path d="M3 7h16v12H3z" />
@@ -195,11 +224,11 @@ const icons = {
 
 export type IconName = keyof typeof icons
 
-export function Icon({ name, size = 20 }: { name: IconName; size?: number }) {
+export function Icon({ className = '', name, size = 20 }: { className?: string; name: IconName; size?: number }) {
   return (
     <svg
       aria-hidden="true"
-      className="inline-block shrink-0 align-middle"
+      className={`inline-block shrink-0 align-middle ${className}`}
       fill="none"
       height={size}
       stroke="currentColor"

@@ -111,7 +111,19 @@ export type Order = {
   deliveryFee?: number
   totalAmount: number
   currency?: string
-  status: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'disputed' | 'cancelled' | 'refunded'
+  status?: 'pending' | 'paid' | 'processing' | 'shipped' | 'delivered' | 'disputed' | 'cancelled' | 'refunded'
+  fulfillmentStatus?: 'awaiting_seller' | 'ready_for_pickup' | 'in_transit' | 'completed' | 'cancelled'
+  settlementStatus?:
+    | 'payment_pending'
+    | 'cash_due'
+    | 'cash_collected'
+    | 'held'
+    | 'released'
+    | 'refund_pending'
+    | 'refund_attention'
+    | 'refunded'
+    | 'refund_failed'
+    | 'void'
   paymentMethod?: 'paystack_mock' | 'paystack' | 'cash_on_pickup'
   paymentStatus?: 'unpaid' | 'paid' | 'cash_on_pickup' | 'refunded'
   paymentRef?: string
@@ -123,9 +135,40 @@ export type Order = {
   autoReleaseAt?: string
   releasedAt?: string
   buyerConfirmedAt?: string
+  sellerActionDueAt?: string
+  pickupReadyAt?: string
+  pickupExpiresAt?: string
+  sentAt?: string
+  deliveryReleaseAt?: string
+  completedAt?: string
+  cancelledAt?: string
+  inventoryRestoredAt?: string
+  settledAt?: string
+  activeReportId?: OrderReport | string
+  disputeReason?: string
   delivery?: {
-    method?: 'pickup' | 'delivery'
+    method?: 'station_pickup' | 'shop_pickup' | 'airport_to_airport'
+    company?: string
     fee?: number
+    recipient?: {
+      name?: string
+      phone?: string
+    }
+    destination?: {
+      region?: string
+      town?: string
+      preferredTerminal?: string
+    }
+    transit?: {
+      /** Legacy free-text transit fields, retained for display on pre-redesign orders. */
+      serviceName?: string
+      busNumber?: string
+      lastStop?: string
+      driverPhone?: string
+      parcelNumber?: string
+      billAttachmentId?: string
+      cargoTrackingNumber?: string
+    }
     address?: {
       region?: string
       city?: string
@@ -133,6 +176,40 @@ export type Order = {
     }
     trackingInfo?: string
   }
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type OrderReportCategory =
+  | 'not_received'
+  | 'invalid_transit_details'
+  | 'seller_or_driver_unreachable'
+  | 'wrong_or_missing_items'
+  | 'damaged_or_not_as_described'
+  | 'fraud_or_safety_concern'
+  | 'other'
+
+export type OrderReport = {
+  _id: string
+  orderId?: Order | string
+  reporterId?: User | string
+  category: OrderReportCategory
+  affectedItemIds?: string[]
+  requestedOutcome?: 'refund' | 'replacement' | 'complete_order' | 'other'
+  summary?: string
+  details?: string
+  detailedAccount?: string
+  evidence?: Array<{
+    _id?: string
+    originalName?: string
+    mimetype?: string
+    contentType?: string
+    size?: number
+  }>
+  declarationAccepted?: boolean
+  status: 'submitted' | 'under_review' | 'resolved' | 'dismissed'
+  frozenAt?: string
+  submittedAt?: string
   createdAt?: string
   updatedAt?: string
 }
@@ -291,53 +368,33 @@ export type AdminStats = {
   revenue: number
 }
 
-export type AnalyticsEventType =
-  | 'page_view'
-  | 'js_error'
-  | 'unhandled_rejection'
-  | 'api_failure'
-  | 'resource_error'
-  | 'custom'
-
-export type AnalyticsSeverity = 'info' | 'warning' | 'error' | 'critical'
-export type AnalyticsSource = 'marketplace' | 'admin' | 'backend' | 'unknown'
-
-export type AnalyticsTimelinePoint = {
-  apiFailures: number
-  clientErrors: number
-  critical: number
-  date: string
-  events: number
-  pageViews: number
-}
-
-export type AnalyticsRecentError = {
+export type AdminAnalyticsFinspoPost = {
   _id: string
-  createdAt?: string
-  endpoint?: string
-  message?: string
-  method?: string
-  path?: string
-  severity: AnalyticsSeverity
-  source: AnalyticsSource
-  statusCode?: number
-  type: AnalyticsEventType
-  url?: string
+  author: { name: string; username: string }
+  caption: string
+  commentCount: number
+  createdAt: string
+  imageUrl: string
+  likes: number
+  views: number
 }
 
-export type AdminAnalytics = {
-  bySeverity: Array<{ count: number; severity: AnalyticsSeverity | 'unknown' }>
-  bySource: Array<{ count: number; source: AnalyticsSource }>
-  byType: Array<{ count: number; type: AnalyticsEventType | 'unknown' }>
+export type AdminProductAnalytics = {
   days: number
-  recentErrors: AnalyticsRecentError[]
-  summary: {
-    apiFailures: number
-    clientErrors: number
-    critical: number
-    events: number
-    failureRate: number
-    pageViews: number
+  finspo: {
+    comments: number
+    postsCreated: number
+    topPosts: AdminAnalyticsFinspoPost[]
+    totalLikes: number
+    totalViews: number
+    trend: Array<{ comments: number; date: string; posts: number }>
   }
-  timeline: AnalyticsTimelinePoint[]
+  orders: {
+    completed: number
+    completionRate: number
+    created: number
+    outcomeBreakdown: Array<{ count: number; outcome: string }>
+    revenue: number
+    trend: Array<{ completed: number; created: number; date: string }>
+  }
 }

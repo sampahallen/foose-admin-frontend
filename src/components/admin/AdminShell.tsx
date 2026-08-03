@@ -1,6 +1,6 @@
 import { useEffect, useState, type ReactNode } from 'react'
 import { TbLayoutSidebarLeftCollapse, TbLayoutSidebarRightCollapse } from 'react-icons/tb'
-import { canResolveDisputes, canReviewKyc, isSuperAdminRole, type UserRoles } from '../../constants/roles'
+import { canResolveDisputes, canReviewKyc, isSuperAdminRole, roleLabels, type UserRoles } from '../../constants/roles'
 import { getAppName } from '../../config/env'
 import { useAuth } from '../../hooks/useAuth'
 import { initials } from '../../utils/format'
@@ -10,33 +10,109 @@ import { Icon, type IconName } from '../icons/Icon'
 
 type AdminSection = 'overview' | 'kyc' | 'disputes' | 'analytics' | 'users'
 
-const NAV: Array<{
+type NavItem = {
   allowed: (roles?: UserRoles, legacyRole?: number | string) => boolean
-  key: AdminSection
-  label: string
   href: string
   icon: IconName
-}> = [
-  { allowed: isSuperAdminRole, href: '/admin', icon: 'grid', key: 'overview', label: 'Dashboard' },
-  { allowed: canReviewKyc, href: '/admin/kyc', icon: 'shield', key: 'kyc', label: 'KYC Reviews' },
-  { allowed: canResolveDisputes, href: '/admin/disputes', icon: 'alert', key: 'disputes', label: 'Disputes' },
-  { allowed: isSuperAdminRole, href: '/admin/analytics', icon: 'chart', key: 'analytics', label: 'Analytics' },
-]
-
-function searchPlaceholder(section: AdminSection) {
-  if (section === 'disputes') return 'Search disputes...'
-  if (section === 'kyc') return 'Search KYC records...'
-  if (section === 'analytics') return 'Search analytics...'
-  return 'Search marketplace...'
+  key: AdminSection
+  label: string
 }
 
-export function AdminShell({ section, children }: { section: AdminSection; children: ReactNode }) {
+const NAV_GROUPS: Array<{ items: NavItem[]; label: string }> = [
+  {
+    items: [
+      { allowed: isSuperAdminRole, href: '/admin', icon: 'grid', key: 'overview', label: 'Dashboard' },
+      { allowed: canReviewKyc, href: '/admin/kyc', icon: 'shield', key: 'kyc', label: 'KYC Reviews' },
+      { allowed: canResolveDisputes, href: '/admin/disputes', icon: 'alert', key: 'disputes', label: 'Disputes' },
+    ],
+    label: 'Operations',
+  },
+  {
+    items: [
+      { allowed: isSuperAdminRole, href: '/admin/users', icon: 'users', key: 'users', label: 'Staff & roles' },
+      { allowed: isSuperAdminRole, href: '/admin/analytics', icon: 'chart', key: 'analytics', label: 'Analytics' },
+    ],
+    label: 'Administration',
+  },
+]
+
+const SECTION_LABELS: Record<AdminSection, string> = {
+  analytics: 'Analytics',
+  disputes: 'Disputes',
+  kyc: 'KYC Reviews',
+  overview: 'Dashboard',
+  users: 'Staff & Roles',
+}
+
+function allowedNavGroups(roles?: UserRoles, legacyRole?: number | string) {
+  return NAV_GROUPS.map((group) => ({ ...group, items: group.items.filter((item) => item.allowed(roles, legacyRole)) })).filter(
+    (group) => group.items.length > 0,
+  )
+}
+
+function NavLinks({ collapsed, groups, onNavigate, section }: { collapsed: boolean; groups: ReturnType<typeof allowedNavGroups>; onNavigate?: () => void; section: AdminSection }) {
+  return (
+    <nav className={`flex flex-col gap-5 ${collapsed ? 'items-center' : ''}`}>
+      {groups.map((group) => (
+        <div className="flex flex-col gap-2" key={group.label}>
+          {!collapsed && <p className="px-4 text-[11px] font-bold uppercase tracking-widest text-foose-faint">{group.label}</p>}
+          {group.items.map((item) => (
+            <a
+              className={`flex items-center gap-3 rounded-lg text-sm font-semibold transition ${
+                collapsed ? 'size-11 justify-center p-0' : 'px-4 py-3'
+              } ${section === item.key ? 'bg-accent text-white' : 'text-foose-muted hover:bg-accent-light hover:text-accent'}`}
+              href={withBasePath(item.href)}
+              key={item.key}
+              onClick={onNavigate}
+              title={item.label}
+            >
+              <Icon name={item.icon} />
+              <span className={collapsed ? 'sr-only' : ''}>{item.label}</span>
+            </a>
+          ))}
+        </div>
+      ))}
+    </nav>
+  )
+}
+
+function SidebarFooter({ collapsed, onLogout, roleLabel, userName }: { collapsed: boolean; onLogout: () => void; roleLabel: string; userName: string }) {
+  return (
+    <footer className={`border-t border-foose-border pt-4 ${collapsed ? 'flex flex-col items-center' : ''}`}>
+      {!collapsed && (
+        <div className="mb-3 flex items-center gap-3 px-1">
+          <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">
+            {initials(userName)}
+          </span>
+          <span className="min-w-0">
+            <strong className="block truncate text-sm text-foose-text">{userName}</strong>
+            <small className="block truncate text-xs font-semibold text-foose-muted">{roleLabel}</small>
+          </span>
+        </div>
+      )}
+      <button
+        className={`flex items-center gap-3 rounded-lg text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent ${
+          collapsed ? 'size-11 justify-center p-0' : 'w-full px-4 py-3'
+        }`}
+        onClick={onLogout}
+        title="Log Out"
+        type="button"
+      >
+        <Icon name="arrow" />
+        <span className={collapsed ? 'sr-only' : ''}>Log Out</span>
+      </button>
+    </footer>
+  )
+}
+
+export function AdminShell({ actions, children, section }: { actions?: ReactNode; children: ReactNode; section: AdminSection }) {
   const { logout, user } = useAuth()
   const brand = getAppName()
   const [menuOpen, setMenuOpen] = useState(false)
   const [logoutConfirmOpen, setLogoutConfirmOpen] = useState(false)
   const [sidebarCollapsed, setSidebarCollapsed] = useState(false)
-  const allowedNav = NAV.filter((item) => item.allowed(user?.roles, user?.role))
+  const groups = allowedNavGroups(user?.roles, user?.role)
+  const primaryRoleLabel = roleLabels(user?.roles, user?.role).find((label) => label !== 'Standard User') || 'Staff'
 
   useEffect(() => {
     if (!menuOpen) return undefined
@@ -67,12 +143,11 @@ export function AdminShell({ section, children }: { section: AdminSection; child
   }
 
   const sidebarWidth = sidebarCollapsed ? 'lg:grid-cols-[80px_minmax(0,1fr)]' : 'lg:grid-cols-[256px_minmax(0,1fr)]'
-  const sidebarLabelClass = sidebarCollapsed ? 'lg:sr-only' : ''
 
   return (
-    <div className={`admin-shell min-h-dvh bg-foose-bg lg:grid ${sidebarWidth}`}>
+    <div className={`min-h-dvh bg-foose-bg lg:grid ${sidebarWidth}`}>
       <aside
-        className={`admin-sidebar sticky top-0 z-40 flex min-h-16 items-center border-b border-foose-border bg-foose-surface p-4 transition-all lg:h-dvh lg:flex-col lg:border-b-0 lg:border-r ${
+        className={`sticky top-0 z-40 flex min-h-16 items-center border-b border-foose-border bg-foose-surface p-4 transition-all lg:h-dvh lg:flex-col lg:justify-between lg:border-b-0 lg:border-r ${
           sidebarCollapsed ? 'justify-between lg:items-center lg:px-3' : 'justify-between lg:items-stretch'
         }`}
       >
@@ -104,56 +179,13 @@ export function AdminShell({ section, children }: { section: AdminSection; child
           <Icon name="menu" />
         </button>
 
-        <nav className={`hidden flex-col gap-2 lg:flex ${sidebarCollapsed ? 'lg:items-center' : ''}`}>
-          {allowedNav.map((item) => (
-            <a
-              className={`flex items-center gap-3 rounded-lg text-sm font-semibold transition ${
-                sidebarCollapsed ? 'size-11 justify-center p-0' : 'px-4 py-3'
-              } ${section === item.key ? 'bg-accent text-white' : 'text-foose-muted hover:bg-accent-light hover:text-accent'}`}
-              href={withBasePath(item.href)}
-              key={item.key}
-              title={item.label}
-            >
-              <Icon name={item.icon} />
-              <span className={sidebarLabelClass}>{item.label}</span>
-            </a>
-          ))}
-        </nav>
+        <div className="hidden lg:block">
+          <NavLinks collapsed={sidebarCollapsed} groups={groups} section={section} />
+        </div>
 
-        <button
-          className={`button-primary hidden items-center gap-2 rounded-lg border border-accent bg-accent text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover lg:inline-flex ${
-            sidebarCollapsed ? 'size-11 justify-center p-0' : 'min-h-11 justify-center px-5 py-2.5'
-          }`}
-          title="Generate Report"
-          type="button"
-        >
-          <Icon name="chart" />
-          <span className={sidebarLabelClass}>Generate Report</span>
-        </button>
-
-        <footer className={`hidden border-t border-foose-border pt-4 lg:block ${sidebarCollapsed ? 'w-full' : ''}`}>
-          <a
-            className={`flex items-center gap-3 rounded-lg text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent ${
-              sidebarCollapsed ? 'mx-auto size-11 justify-center p-0' : 'px-4 py-3'
-            }`}
-            href={withBasePath('/admin')}
-            title="Security"
-          >
-            <Icon name="shield" />
-            <span className={sidebarLabelClass}>Security</span>
-          </a>
-          <button
-            className={`admin-footer-action mt-2 flex w-full items-center gap-3 rounded-lg text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent ${
-              sidebarCollapsed ? 'mx-auto size-11 justify-center p-0' : 'px-4 py-3'
-            }`}
-            onClick={requestLogout}
-            title="Log Out"
-            type="button"
-          >
-            <Icon name="arrow" />
-            <span className={sidebarLabelClass}>Log Out</span>
-          </button>
-        </footer>
+        <div className="hidden lg:block">
+          <SidebarFooter collapsed={sidebarCollapsed} onLogout={requestLogout} roleLabel={primaryRoleLabel} userName={user?.name || 'Admin'} />
+        </div>
       </aside>
 
       {menuOpen && (
@@ -175,63 +207,26 @@ export function AdminShell({ section, children }: { section: AdminSection; child
               </button>
             </div>
 
-            <nav className="mt-4 grid gap-2">
-              {allowedNav.map((item) => (
-                <a
-                  className={`flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold transition ${
-                    section === item.key ? 'bg-accent text-white' : 'text-foose-muted hover:bg-accent-light hover:text-accent'
-                  }`}
-                  href={withBasePath(item.href)}
-                  key={item.key}
-                  onClick={closeMenu}
-                >
-                  <Icon name={item.icon} /> {item.label}
-                </a>
-              ))}
-            </nav>
-
-            <button
-              className="mt-4 inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border border-accent bg-accent px-5 py-2.5 text-sm font-bold text-white shadow-md shadow-accent/15 transition hover:bg-accent-hover"
-              type="button"
-            >
-              <Icon name="chart" /> Generate Report
-            </button>
-
-            <div className="mt-auto border-t border-foose-border pt-4">
-              <a
-                className="flex items-center gap-3 rounded-lg px-4 py-3 text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent"
-                href={withBasePath('/admin')}
-                onClick={closeMenu}
-              >
-                <Icon name="shield" /> Security
-              </a>
-              <button
-                className="mt-2 flex w-full items-center gap-3 rounded-lg px-4 py-3 text-left text-sm font-semibold text-foose-muted transition hover:bg-accent-light hover:text-accent"
-                onClick={requestLogout}
-                type="button"
-              >
-                <Icon name="arrow" /> Log Out
-              </button>
+            <div className="mt-4 flex-1 overflow-y-auto">
+              <NavLinks collapsed={false} groups={groups} onNavigate={closeMenu} section={section} />
             </div>
+
+            <SidebarFooter collapsed={false} onLogout={requestLogout} roleLabel={primaryRoleLabel} userName={user?.name || 'Admin'} />
           </aside>
         </div>
       )}
 
       <LogoutConfirmDialog onCancel={cancelLogout} onConfirm={confirmLogout} open={logoutConfirmOpen} />
 
-      <main className="admin-main min-w-0">
-        <header className="admin-top sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-foose-border bg-foose-surface/95 p-4 backdrop-blur">
-          <label className="flex h-11 w-full max-w-md items-center gap-3 rounded-lg bg-foose-surface-mid px-4">
-            <Icon name="search" />
-            <input className="min-w-0 flex-1 border-0 bg-transparent p-0 text-sm outline-none" placeholder={searchPlaceholder(section)} />
-          </label>
-          <div className="flex items-center gap-3 text-foose-muted">
-            <Icon name="bell" />
-            <Icon name="info" />
+      <main className="min-w-0">
+        <header className="sticky top-0 z-30 flex items-center justify-between gap-4 border-b border-foose-border bg-foose-surface/95 p-4 backdrop-blur">
+          <p className="text-sm font-bold uppercase tracking-widest text-foose-muted">{SECTION_LABELS[section]}</p>
+          <div className="flex items-center gap-3">
+            {actions}
             {user?.profilePhoto ? (
               <img alt="" className="size-10 rounded-full object-cover" src={user.profilePhoto} />
             ) : (
-              <span className="admin-avatar-fallback inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">{initials(user?.name)}</span>
+              <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">{initials(user?.name)}</span>
             )}
           </div>
         </header>

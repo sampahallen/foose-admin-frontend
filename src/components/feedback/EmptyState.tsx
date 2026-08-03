@@ -13,10 +13,10 @@ export function EmptyState({
   title: string
 }) {
   return (
-    <div className="state-panel mx-auto my-10 flex max-w-xl flex-col items-center gap-4 rounded-xl border border-foose-border bg-foose-surface p-8 text-center empty-state [&_.icon]:text-accent">
+    <div className="mx-auto my-10 flex max-w-xl flex-col items-center gap-4 rounded-xl border border-foose-border bg-foose-surface p-8 text-center text-accent">
       <Icon name={icon} size={32} />
-      <h2>{title}</h2>
-      <p>{body}</p>
+      <h2 className="text-lg font-bold text-foose-text">{title}</h2>
+      <p className="text-sm leading-6 text-foose-muted">{body}</p>
       {action}
     </div>
   )

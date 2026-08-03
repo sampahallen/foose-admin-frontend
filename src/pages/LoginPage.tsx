@@ -44,7 +44,7 @@ export function LoginPage() {
   }
 
   return (
-    <main className="admin-auth-page flex min-h-dvh items-center justify-center bg-[#f5f7fb] px-4 py-10 text-foose-text">
+    <main className="flex min-h-dvh items-center justify-center bg-[#f5f7fb] px-4 py-10 text-foose-text">
       <form
         className="w-full max-w-[440px] rounded-lg border border-[#d9deea] bg-foose-surface p-6 shadow-[0_22px_70px_rgba(26,27,37,0.13)] sm:p-8"
         onSubmit={(event) => void handleSubmit(event)}

@@ -1,12 +1,11 @@
 import { useState } from 'react'
-import { AdminShell, Badge, ButtonLink, ConfirmDialog, EmptyState, ErrorState, Icon, LoadingState } from '../components'
+import { AdminShell, Badge, Button, EmptyState, ErrorState, Icon, KycActionDialog, LoadingState, PageHeader } from '../components'
 import { roleLabels } from '../constants/roles'
 import { useApiResource } from '../hooks/useApiResource'
-import { apiPut } from '../lib/api'
+import { useKycReviewAction } from '../hooks/useKycReviewAction'
 import type { KycRecord, User } from '../types/api'
-import { getErrorMessage } from '../utils/errorMessage'
 import { formatDateTime, initials } from '../utils/format'
-import { getCurrentAppPathname, withBasePath } from '../utils/navigation'
+import { getCurrentAppPathname } from '../utils/navigation'
 
 type KycDetail = Omit<KycRecord, 'reviewedBy' | 'userId'> & {
   _id: string
@@ -18,8 +17,6 @@ type PreviewImage = {
   title: string
   url: string
 }
-
-type KycAction = 'approve' | 'reject'
 
 const STATUS_TONE = {
   approved: 'success',
@@ -65,7 +62,7 @@ function DocumentPreview({
   url?: string
 }) {
   return (
-    <article className="kyc-document-card h-full rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5">
+    <article className="h-full rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5">
       <header className="mb-3 flex items-center justify-between gap-3">
         <strong className="text-sm font-bold text-foose-text">{title}</strong>
         {url && (
@@ -86,7 +83,7 @@ function DocumentPreview({
           </span>
         </button>
       ) : (
-        <span className="image-placeholder flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-foose-surface-mid text-sm font-semibold text-foose-faint sm:aspect-[3/2]">
+        <span className="flex aspect-[4/3] w-full items-center justify-center rounded-lg bg-foose-surface-mid text-sm font-semibold text-foose-faint sm:aspect-[3/2]">
           No image submitted
         </span>
       )}
@@ -121,96 +118,51 @@ function ImagePreviewModal({ onClose, preview }: { onClose: () => void; preview:
 export function AdminKycDetailPage() {
   const kycId = currentKycId()
   const resource = useApiResource<{ kyc: KycDetail }>(kycId ? `/admin/kyc/${kycId}` : null)
-  const [actionError, setActionError] = useState('')
-  const [busyAction, setBusyAction] = useState('')
   const [previewImage, setPreviewImage] = useState<PreviewImage | null>(null)
-  const [kycAction, setKycAction] = useState<KycAction | null>(null)
-  const [rejectReason, setRejectReason] = useState('')
-  const [actionDialogError, setActionDialogError] = useState('')
+  const kycActionController = useKycReviewAction({ onSuccess: () => resource.refetch() })
 
   const kyc = resource.data?.kyc
   const sellerName = getUserName(kyc?.userId)
   const userMeta = getUserMeta(kyc?.userId)
 
-  function requestKycAction(action: KycAction) {
-    setActionError('')
-    setActionDialogError('')
-    setRejectReason('')
-    setKycAction(action)
-  }
-
-  function cancelKycAction() {
-    if (busyAction) return
-    setActionDialogError('')
-    setRejectReason('')
-    setKycAction(null)
-  }
-
-  async function confirmKycAction() {
-    if (!kycId || !kycAction) return
-    const reason = rejectReason.trim()
-
-    setActionError('')
-    setActionDialogError('')
-    setBusyAction(kycAction)
-    try {
-      if (kycAction === 'approve') {
-        await apiPut(`/admin/kyc/${kycId}/approve`)
-      } else {
-        await apiPut(`/admin/kyc/${kycId}/reject`, { reason })
-      }
-      await resource.refetch()
-      setKycAction(null)
-      setRejectReason('')
-    } catch (requestError) {
-      setActionDialogError(
-        getErrorMessage(requestError, kycAction === 'approve' ? 'Unable to approve KYC submission' : 'Unable to reject KYC submission'),
-      )
-    } finally {
-      setBusyAction('')
-    }
-  }
-
-  const kycActionIdNo = kyc?.idNo || 'Not provided'
-
   return (
     <AdminShell section="kyc">
-      <section className="admin-page p-4 md:p-6 lg:p-8">
-        <a className="back-link mb-6 inline-flex items-center gap-2 text-sm font-semibold text-foose-muted hover:text-accent" href={withBasePath('/admin/kyc')}>
-          <Icon name="arrow" /> Back to KYC queue
-        </a>
+      <section className="p-4 md:p-6 lg:p-8">
+        <PageHeader
+          actions={
+            kyc && (
+              <>
+                <Badge tone={STATUS_TONE[kyc.status]}>{kyc.status.replace('_', ' ')}</Badge>
+                <Button loading={kycActionController.busy && kycActionController.action === 'approve'} loadingLabel="Approving..." onClick={() => kycActionController.request('approve', kycId)}>
+                  Approve
+                </Button>
+                <Button loading={kycActionController.busy && kycActionController.action === 'reject'} loadingLabel="Rejecting..." onClick={() => kycActionController.request('reject', kycId)} variant="secondary">
+                  Reject
+                </Button>
+              </>
+            )
+          }
+          backLabel="Back to KYC queue"
+          backTo="/admin/kyc"
+          description="Review identity documents, card number, selfie, and submission history."
+          title={kyc ? sellerName : 'KYC record'}
+        />
+
         {!kycId && <EmptyState body="Open a KYC record from the admin queue." title="KYC record required" />}
         {resource.loading && <LoadingState label="Loading KYC details..." />}
         {resource.error && <ErrorState message={resource.error} retry={resource.refetch} />}
-        {actionError && <ErrorState message={actionError} />}
         {kyc && (
           <>
-            <div className="admin-title mb-5 flex flex-col gap-2 md:flex-row md:items-center md:justify-between [&_h1]:text-2xl [&_h1]:font-bold [&_h1]:md:text-4xl [&_p]:text-sm [&_p]:leading-6 [&_p]:text-foose-muted [&_p]:md:text-base max-md:[&_h1]:text-2xl">
-              <div>
-                <h1>{sellerName}</h1>
-                <p>Review identity documents, card number, selfie, and submission history.</p>
-              </div>
-              <div className="button-row flex flex-wrap items-center gap-3">
-                <Badge tone={STATUS_TONE[kyc.status]}>{kyc.status.replace('_', ' ')}</Badge>
-                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-primary border-accent bg-accent text-white shadow-md shadow-accent/15 hover:bg-accent-hover" disabled={busyAction === 'approve'} onClick={() => requestKycAction('approve')} type="button">
-                  {busyAction === 'approve' ? 'Approving...' : 'Approve'}
-                </button>
-                <button className="button inline-flex min-h-11 items-center justify-center gap-2 rounded-lg border px-5 py-2.5 text-center text-sm font-bold transition disabled:pointer-events-none disabled:opacity-50 [&.full]:w-full button-secondary border-foose-border bg-foose-surface text-foose-text hover:border-accent hover:text-accent" disabled={busyAction === 'reject'} onClick={() => requestKycAction('reject')} type="button">
-                  {busyAction === 'reject' ? 'Rejecting...' : 'Reject'}
-                </button>
-              </div>
-            </div>
-
-            <div className="kyc-detail-grid grid gap-6">
-              <section className="form-card rounded-xl border border-foose-border bg-foose-surface shadow-sm p-4 md:p-5 [&_label]:text-sm [&_label]:font-semibold [&_label]:text-foose-text [&_label]:flex [&_label]:flex-col [&_label]:gap-2 [&_input]:w-full [&_input]:px-3 [&_input]:py-3 [&_select]:w-full [&_select]:px-3 [&_select]:py-3 [&_textarea]:w-full [&_textarea]:px-3 [&_textarea]:py-3 max-lg:rounded-lg max-lg:p-3 kyc-identity-card">
-                <div className="person-heading">
-                  <span className="initials inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">{initials(sellerName)}</span>
+            <div className="grid gap-6">
+              <section className="rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5">
+                <div className="mb-4 flex items-center gap-3">
+                  <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">{initials(sellerName)}</span>
                   <div>
-                    <h2>Seller details</h2>
-                    {getUserEmail(kyc.userId) && <p>{getUserEmail(kyc.userId)}</p>}
+                    <h2 className="text-base font-bold text-foose-text">Seller details</h2>
+                    {getUserEmail(kyc.userId) && <p className="text-sm text-foose-muted">{getUserEmail(kyc.userId)}</p>}
                   </div>
                 </div>
-                <dl className="record-grid grid gap-3 sm:grid-cols-2 [&_div]:rounded-lg [&_div]:bg-foose-surface-low [&_div]:p-3 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:uppercase [&_dt]:tracking-widest [&_dt]:text-foose-faint [&_dd]:mt-1 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:text-foose-text [&_.wide]:sm:col-span-2">
+                <dl className="grid gap-3 sm:grid-cols-2 [&_dd]:mt-1 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:text-foose-text [&_div]:rounded-lg [&_div]:bg-foose-surface-low [&_div]:p-3 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:uppercase [&_dt]:tracking-widest [&_dt]:text-foose-faint">
                   <div>
                     <dt>Account</dt>
                     <dd>{userMeta.join(' / ') || 'Not available'}</dd>
@@ -230,11 +182,11 @@ export function AdminKycDetailPage() {
                 </dl>
               </section>
 
-              <section className="form-card rounded-xl border border-foose-border bg-foose-surface shadow-sm p-4 md:p-5 [&_label]:text-sm [&_label]:font-semibold [&_label]:text-foose-text [&_label]:flex [&_label]:flex-col [&_label]:gap-2 [&_input]:w-full [&_input]:px-3 [&_input]:py-3 [&_select]:w-full [&_select]:px-3 [&_select]:py-3 [&_textarea]:w-full [&_textarea]:px-3 [&_textarea]:py-3 max-lg:rounded-lg max-lg:p-3">
-                <h2>
+              <section className="rounded-xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5">
+                <h2 className="mb-4 flex items-center gap-2 text-base font-bold text-foose-text">
                   <Icon name="shield" /> ID details
                 </h2>
-                <dl className="record-grid grid gap-3 sm:grid-cols-2 [&_div]:rounded-lg [&_div]:bg-foose-surface-low [&_div]:p-3 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:uppercase [&_dt]:tracking-widest [&_dt]:text-foose-faint [&_dd]:mt-1 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:text-foose-text [&_.wide]:sm:col-span-2">
+                <dl className="grid gap-3 sm:grid-cols-2 [&_.wide]:sm:col-span-2 [&_dd]:mt-1 [&_dd]:text-sm [&_dd]:font-semibold [&_dd]:text-foose-text [&_div]:rounded-lg [&_div]:bg-foose-surface-low [&_div]:p-3 [&_dt]:text-xs [&_dt]:font-bold [&_dt]:uppercase [&_dt]:tracking-widest [&_dt]:text-foose-faint">
                   <div>
                     <dt>ID type</dt>
                     <dd>{kyc.idType || 'Not provided'}</dd>
@@ -258,81 +210,22 @@ export function AdminKycDetailPage() {
                   {kyc.rejectionReason && (
                     <div className="wide">
                       <dt>Rejection reason</dt>
-                      <dd className="danger-text font-semibold text-foose-danger">{kyc.rejectionReason}</dd>
+                      <dd className="font-semibold text-foose-danger">{kyc.rejectionReason}</dd>
                     </div>
                   )}
                 </dl>
               </section>
             </div>
 
-            <section className="kyc-documents grid gap-5 md:grid-cols-2">
+            <section className="mt-6 grid gap-5 md:grid-cols-2">
               <DocumentPreview onPreview={setPreviewImage} title="Submitted ID document" url={kyc.idImgUrl} />
               <DocumentPreview onPreview={setPreviewImage} title="Submitted selfie" url={kyc.selfieImgUrl} />
             </section>
-
-            <div className="form-actions flex flex-wrap items-center gap-3">
-              <ButtonLink to="/admin/kyc" variant="secondary">
-                Return to queue
-              </ButtonLink>
-            </div>
           </>
         )}
       </section>
-      {kycAction && (
-        <ConfirmDialog
-          cancelDisabled={Boolean(busyAction)}
-          confirmDisabled={Boolean(busyAction)}
-          confirmLabel={
-            busyAction
-              ? kycAction === 'approve'
-                ? 'Approving...'
-                : 'Rejecting...'
-              : kycAction === 'approve'
-                ? 'Approve KYC'
-                : 'Reject KYC'
-          }
-          description={`Are you sure you want to ${kycAction} KYC for user ${sellerName} of ID No. ${kycActionIdNo}?`}
-          onCancel={cancelKycAction}
-          onConfirm={() => void confirmKycAction()}
-          open={Boolean(kycAction)}
-          title={kycAction === 'approve' ? 'Approve KYC?' : 'Reject KYC?'}
-          tone={kycAction === 'approve' ? 'success' : 'danger'}
-        >
-          <div className="grid gap-4">
-            <div className="grid gap-3 rounded-lg bg-foose-surface-low p-3 text-sm sm:grid-cols-2">
-              <div>
-                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">Seller</span>
-                <strong className="mt-1 block text-foose-text">{sellerName}</strong>
-              </div>
-              <div>
-                <span className="block text-xs font-bold uppercase tracking-widest text-foose-faint">ID No.</span>
-                <strong className="mt-1 block text-foose-text">{kycActionIdNo}</strong>
-              </div>
-            </div>
 
-            {kycAction === 'reject' && (
-              <label className="text-sm font-semibold text-foose-text">
-                Rejection reason optional
-                <textarea
-                  className="mt-2 min-h-28 w-full resize-y rounded-lg border border-foose-border bg-white px-3 py-3 text-sm font-medium text-foose-text outline-none transition placeholder:text-foose-faint focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => {
-                    setRejectReason(event.target.value)
-                    setActionDialogError('')
-                  }}
-                  placeholder="Explain what the seller needs to fix."
-                  value={rejectReason}
-                />
-              </label>
-            )}
-
-            {actionDialogError && (
-              <p className="rounded-lg border border-foose-danger/30 bg-foose-danger-bg px-3 py-2 text-sm font-semibold text-foose-danger">
-                {actionDialogError}
-              </p>
-            )}
-          </div>
-        </ConfirmDialog>
-      )}
+      <KycActionDialog controller={kycActionController} idNo={kyc?.idNo} sellerName={sellerName} />
       {previewImage && <ImagePreviewModal onClose={() => setPreviewImage(null)} preview={previewImage} />}
     </AdminShell>
   )
