@@ -1,10 +1,10 @@
 import { useMemo, useState } from 'react'
-import { AdminShell, Badge, Button, DataTable, PageHeader } from '../components'
+import { AdminShell, Badge, Button, ConfirmDialog, DataTable, PageHeader } from '../components'
 import { ChartFrame, Meter, StatusBar } from '../components/charts'
 import { statusColor } from '../constants/charts'
 import { useApiResource } from '../hooks/useApiResource'
 import { useClientTable } from '../hooks/useClientTable'
-import { apiGet } from '../lib/api'
+import { apiGet, apiPut } from '../lib/api'
 import type { Order, OrderReport, Shop, User } from '../types/api'
 import { exportRowsToCsv } from '../utils/exportCsv'
 import { formatDateTime, formatMoney } from '../utils/format'
@@ -25,6 +25,8 @@ type QueueItem = {
 }
 
 type ViewMode = 'cards' | 'table'
+type SettlementSide = 'buyer' | 'seller'
+type SettlementDecision = { item: QueueItem; side: SettlementSide } | null
 
 const categoryLabels: Record<OrderReport['category'], string> = {
   damaged_or_not_as_described: 'Damaged or not as described',
@@ -102,6 +104,11 @@ export function AdminDisputesPage() {
   const queue = useApiResource<{ orders?: DisputeOrder[]; reports?: AdminOrderReport[] }>('/admin/disputes')
   const [attachmentError, setAttachmentError] = useState('')
   const [openingEvidence, setOpeningEvidence] = useState('')
+  const [decision, setDecision] = useState<SettlementDecision>(null)
+  const [resolutionNote, setResolutionNote] = useState('')
+  const [settlementError, setSettlementError] = useState('')
+  const [settlementSuccess, setSettlementSuccess] = useState('')
+  const [settling, setSettling] = useState(false)
 
   const allItems = useMemo(() => queueItems(queue.data), [queue.data])
   const heldCount = allItems.filter(({ order }) => isEscrowHeld(order)).length
@@ -158,6 +165,53 @@ export function AdminDisputesPage() {
     }
   }
 
+  function reviewSettlement(item: QueueItem, side: SettlementSide) {
+    setDecision({ item, side })
+    setResolutionNote('')
+    setSettlementError('')
+  }
+
+  async function settleDispute() {
+    const orderId = decision?.item.order?._id
+    if (!decision || !orderId || resolutionNote.trim().length < 10 || settling) return
+
+    setSettling(true)
+    setSettlementError('')
+    setSettlementSuccess('')
+    try {
+      await apiPut(`/admin/disputes/${encodeURIComponent(orderId)}/resolve`, {
+        note: resolutionNote.trim(),
+        resolveFor: decision.side,
+      })
+      setSettlementSuccess(
+        decision.side === 'buyer'
+          ? `Order #${orderId.slice(-8)} was settled for the buyer. The original-payment refund has started.`
+          : `Order #${orderId.slice(-8)} was settled for the seller. The protected funds were released.`,
+      )
+      setDecision(null)
+      setResolutionNote('')
+      await queue.refetch()
+    } catch (error) {
+      setSettlementError(error instanceof Error ? error.message : 'Unable to settle this report')
+    } finally {
+      setSettling(false)
+    }
+  }
+
+  function settlementActions(item: QueueItem, compact = false) {
+    const unavailable = !item.order?._id || !isEscrowHeld(item.order)
+    return (
+      <div className={`flex flex-wrap gap-2 ${compact ? 'min-w-56' : 'mt-4 justify-end border-t border-foose-border pt-4'}`}>
+        <Button disabled={unavailable} onClick={() => reviewSettlement(item, 'buyer')} size="sm" variant="warning">
+          Refund buyer
+        </Button>
+        <Button disabled={unavailable} onClick={() => reviewSettlement(item, 'seller')} size="sm" variant="success">
+          Release seller
+        </Button>
+      </div>
+    )
+  }
+
   function exportCsv() {
     exportRowsToCsv(
       'dispute-reports.csv',
@@ -184,11 +238,11 @@ export function AdminDisputesPage() {
               Export CSV ({table.total})
             </Button>
           }
-          description="Buyer reports are preserved here while the related funds remain frozen."
+          description="Review buyer evidence, record an auditable decision, and settle the protected order funds."
           meta={
             <div className="rounded-xl border border-accent/25 bg-accent-light p-4 text-sm leading-6 text-foose-text">
-              <strong className="block">Read-only safety mode</strong>
-              Refund and seller-release actions are intentionally unavailable here. A report stays frozen until the dedicated review flow records an auditable decision outside this console.
+              <strong className="block">Settlement decisions are final</strong>
+              Refunding the buyer restores inventory and starts a full refund to the original payment method. Releasing to the seller moves the protected total into the seller's Foose wallet.
             </div>
           }
           title="Order report queue"
@@ -201,6 +255,11 @@ export function AdminDisputesPage() {
         {attachmentError && (
           <div className="mb-5 rounded-xl border border-foose-danger/30 bg-foose-danger-bg p-4 text-sm text-foose-danger" role="alert">
             {attachmentError}
+          </div>
+        )}
+        {settlementSuccess && (
+          <div className="mb-5 rounded-xl border border-foose-success/30 bg-foose-success-bg p-4 text-sm font-semibold text-foose-success" role="status">
+            {settlementSuccess}
           </div>
         )}
 
@@ -273,6 +332,7 @@ export function AdminDisputesPage() {
                   { cell: (item) => shopName(item.order?.shopId), header: 'Seller', hideBelow: 'lg', key: 'seller' },
                   { align: 'right', cell: (item) => formatMoney(item.order?.totalAmount, item.order?.currency), header: 'Amount', key: 'amount' },
                   { cell: (item) => formatDateTime(item.report?.createdAt || item.report?.frozenAt), header: 'Submitted', hideBelow: 'lg', key: 'submitted' },
+                  { cell: (item) => settlementActions(item, true), header: 'Settle', key: 'actions' },
                 ]}
                 empty={{ body: 'No reports match your search.', title: 'No matching reports' }}
                 minWidth={860}
@@ -356,6 +416,7 @@ export function AdminDisputesPage() {
                           </div>
                         </div>
                       )}
+                      {settlementActions(item)}
                     </article>
                   )
                 })}
@@ -374,6 +435,37 @@ export function AdminDisputesPage() {
           </>
         )}
       </section>
+      <ConfirmDialog
+        cancelDisabled={settling}
+        confirmDisabled={settling || resolutionNote.trim().length < 10}
+        confirmLabel={decision?.side === 'buyer' ? 'Refund buyer' : 'Release to seller'}
+        description={decision?.side === 'buyer'
+          ? 'This closes the report, restores the order inventory, and starts a full refund to the buyer\'s original payment method.'
+          : 'This closes the report, completes the order, and immediately moves the protected total into the seller\'s Foose wallet.'}
+        onCancel={() => {
+          if (settling) return
+          setDecision(null)
+          setSettlementError('')
+        }}
+        onConfirm={() => void settleDispute()}
+        open={Boolean(decision)}
+        title={decision?.side === 'buyer' ? 'Settle this report for the buyer?' : 'Settle this report for the seller?'}
+        tone={decision?.side === 'buyer' ? 'warning' : 'success'}
+      >
+        <label className="block text-sm font-bold text-foose-text">
+          Decision note
+          <textarea
+            className="mt-2 min-h-28 w-full resize-y rounded-lg border border-foose-border bg-white px-3 py-2 text-sm font-normal leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            disabled={settling}
+            maxLength={1000}
+            onChange={(event) => setResolutionNote(event.target.value)}
+            placeholder="Summarize the evidence reviewed and why this outcome was selected."
+            value={resolutionNote}
+          />
+          <span className="mt-1 block text-xs font-normal text-foose-muted">At least 10 characters. This note is stored with the resolution audit record.</span>
+        </label>
+        {settlementError && <p className="mt-3 rounded-lg bg-foose-danger-bg px-3 py-2 text-sm font-semibold text-foose-danger" role="alert">{settlementError}</p>}
+      </ConfirmDialog>
     </AdminShell>
   )
 }

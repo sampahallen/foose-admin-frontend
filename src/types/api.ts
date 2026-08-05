@@ -208,6 +208,13 @@ export type OrderReport = {
   }>
   declarationAccepted?: boolean
   status: 'submitted' | 'under_review' | 'resolved' | 'dismissed'
+  isActive?: boolean
+  resolution?: {
+    awardedTo?: 'buyer' | 'seller'
+    resolverId?: User | string
+    note?: string
+    resolvedAt?: string
+  }
   frozenAt?: string
   submittedAt?: string
   createdAt?: string
