@@ -58,6 +58,10 @@ export type Shop = {
   isLive?: boolean
   rating?: number
   totalReviews?: number
+  location?: {
+    region?: string
+    city?: string
+  }
   payoutMethod?: {
     type?: 'mobile_money' | 'bank_transfer'
     accountName?: string
@@ -102,6 +106,7 @@ export type Order = {
   buyerId?: User | string
   shopId?: Shop | string
   items: Array<{
+    _id?: string
     listingId?: Listing | string
     title: string
     price: number
@@ -155,19 +160,23 @@ export type Order = {
       phone?: string
     }
     destination?: {
+      recipientName?: string
+      recipientPhone?: string
       region?: string
       town?: string
       preferredTerminal?: string
     }
     transit?: {
-      /** Legacy free-text transit fields, retained for display on pre-redesign orders. */
       serviceName?: string
-      busNumber?: string
-      lastStop?: string
       driverPhone?: string
       parcelNumber?: string
       billAttachmentId?: string
       cargoTrackingNumber?: string
+      billImage?: {
+        originalName?: string
+        mimetype?: string
+        size?: number
+      }
     }
     address?: {
       region?: string

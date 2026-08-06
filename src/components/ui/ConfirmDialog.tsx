@@ -41,9 +41,13 @@ export function ConfirmDialog({
   const panelRef = useRef<HTMLElement | null>(null)
 
   useEffect(() => {
-    if (!open) return undefined
-    cancelRef.current?.focus()
+    if (!open) return
+    const preferred = panelRef.current?.querySelector<HTMLElement>('[data-dialog-initial-focus]')
+    ;(preferred || cancelRef.current)?.focus()
+  }, [open])
 
+  useEffect(() => {
+    if (!open) return undefined
     function handleKeyDown(event: KeyboardEvent) {
       if (event.key === 'Escape') {
         if (!cancelDisabled) onCancel()

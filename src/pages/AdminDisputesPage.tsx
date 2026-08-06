@@ -1,10 +1,11 @@
-import { useMemo, useState } from 'react'
-import { AdminShell, Badge, Button, ConfirmDialog, DataTable, PageHeader } from '../components'
+import { useEffect, useMemo, useState } from 'react'
+import { AdminShell, Badge, Button, ConfirmDialog, DataTable, MediaPreviewModal, PageHeader } from '../components'
 import { ChartFrame, Meter, StatusBar } from '../components/charts'
 import { statusColor } from '../constants/charts'
 import { useApiResource } from '../hooks/useApiResource'
 import { useClientTable } from '../hooks/useClientTable'
 import { apiGet, apiPut } from '../lib/api'
+import { useMediaPreviewStore } from '../stores/mediaPreviewStore'
 import type { Order, OrderReport, Shop, User } from '../types/api'
 import { exportRowsToCsv } from '../utils/exportCsv'
 import { formatDateTime, formatMoney } from '../utils/format'
@@ -69,8 +70,36 @@ function shopName(value: Shop | string | undefined) {
   return value && typeof value === 'object' ? value.shopName : 'Shop'
 }
 
+function populatedPerson(value: User | string | undefined) {
+  return value && typeof value === 'object' ? value : undefined
+}
+
+function sellerFor(order?: DisputeOrder) {
+  if (!order?.shopId || typeof order.shopId === 'string') return undefined
+  return populatedPerson(order.shopId.ownerId)
+}
+
+function locationLabel(value?: { city?: string; region?: string }) {
+  return [value?.city, value?.region].filter(Boolean).join(', ') || 'Not provided'
+}
+
+function deliveryDestination(order?: DisputeOrder) {
+  const destination = order?.delivery?.destination
+  const address = order?.delivery?.address
+  return [
+    destination?.preferredTerminal,
+    destination?.town || address?.city,
+    destination?.region || address?.region,
+    address?.street,
+  ].filter(Boolean).join(', ') || 'Not provided'
+}
+
 function orderItems(order?: DisputeOrder) {
   return order?.items.map((item) => item.title).filter(Boolean).join(', ') || 'Order details unavailable'
+}
+
+function orderNumber(order?: DisputeOrder) {
+  return order?._id ? `#${order._id.slice(-8).toUpperCase()}` : 'not populated'
 }
 
 function categoryLabel(item: QueueItem) {
@@ -100,15 +129,77 @@ function submittedAt(item: QueueItem) {
   return value ? new Date(value).getTime() : 0
 }
 
+function PrivateAttachmentThumbnail({
+  index,
+  kind,
+  label,
+  onError,
+  orderId,
+}: {
+  index?: number
+  kind: 'report-evidence' | 'transit-bill'
+  label: string
+  onError: (message: string) => void
+  orderId: string
+}) {
+  const [source, setSource] = useState('')
+  const [loading, setLoading] = useState(true)
+  const [failed, setFailed] = useState(false)
+  const openPreview = useMediaPreviewStore((state) => state.openPreview)
+
+  useEffect(() => {
+    let active = true
+    const suffix = index === undefined ? '' : `/${index}`
+
+    void apiGet<{ signedUrl?: string; url?: string }>(
+      `/orders/${encodeURIComponent(orderId)}/attachments/${kind}${suffix}`,
+    ).then((attachment) => {
+      if (!active) return
+      const url = attachment.signedUrl || attachment.url
+      if (!url) throw new Error('The private image link could not be created')
+      setSource(url)
+    }).catch((error) => {
+      if (!active) return
+      setFailed(true)
+      onError(error instanceof Error ? error.message : 'Unable to load this private image')
+    }).finally(() => {
+      if (active) setLoading(false)
+    })
+
+    return () => { active = false }
+  }, [index, kind, onError, orderId])
+
+  return (
+    <button
+      aria-label={`View ${label}`}
+      className="group relative size-20 shrink-0 overflow-hidden rounded-xl border border-foose-border bg-foose-surface-low text-center shadow-sm transition hover:border-accent hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent disabled:cursor-not-allowed"
+      disabled={!source}
+      onClick={(event) => {
+        event.stopPropagation()
+        if (source) openPreview({ alt: label, src: source })
+      }}
+      type="button"
+    >
+      {source && <img alt="" className="size-full object-cover transition group-hover:scale-105" src={source} />}
+      {!source && (
+        <span className="flex size-full items-center justify-center px-1 text-[10px] font-bold leading-tight text-foose-muted">
+          {loading ? 'Loading…' : failed ? 'Unavailable' : 'No preview'}
+        </span>
+      )}
+      {source && <span className="absolute inset-x-0 bottom-0 truncate bg-black/65 px-1 py-1 text-[9px] font-bold text-white">{label}</span>}
+    </button>
+  )
+}
+
 export function AdminDisputesPage() {
   const queue = useApiResource<{ orders?: DisputeOrder[]; reports?: AdminOrderReport[] }>('/admin/disputes')
   const [attachmentError, setAttachmentError] = useState('')
-  const [openingEvidence, setOpeningEvidence] = useState('')
   const [decision, setDecision] = useState<SettlementDecision>(null)
   const [resolutionNote, setResolutionNote] = useState('')
   const [settlementError, setSettlementError] = useState('')
   const [settlementSuccess, setSettlementSuccess] = useState('')
   const [settling, setSettling] = useState(false)
+  const [selectedItem, setSelectedItem] = useState<QueueItem | null>(null)
 
   const allItems = useMemo(() => queueItems(queue.data), [queue.data])
   const heldCount = allItems.filter(({ order }) => isEscrowHeld(order)).length
@@ -137,34 +228,6 @@ export function AdminDisputesPage() {
   })
   const view = (table.state.view as ViewMode) === 'table' ? 'table' : 'cards'
 
-  async function openEvidence(orderId: string, index: number) {
-    const key = `${orderId}:${index}`
-    if (openingEvidence) return
-
-    const previewWindow = window.open('about:blank', '_blank')
-    if (!previewWindow) {
-      setAttachmentError('Your browser blocked the private evidence viewer. Allow pop-ups for Foose, then try again.')
-      return
-    }
-    previewWindow.opener = null
-    setOpeningEvidence(key)
-    setAttachmentError('')
-
-    try {
-      const attachment = await apiGet<{ signedUrl?: string; url?: string }>(
-        `/orders/${encodeURIComponent(orderId)}/attachments/report-evidence/${index}`,
-      )
-      const url = attachment.signedUrl || attachment.url
-      if (!url) throw new Error('The private evidence link could not be created')
-      previewWindow.location.replace(url)
-    } catch (error) {
-      previewWindow.close()
-      setAttachmentError(error instanceof Error ? error.message : 'Unable to open this evidence image')
-    } finally {
-      setOpeningEvidence('')
-    }
-  }
-
   function reviewSettlement(item: QueueItem, side: SettlementSide) {
     setDecision({ item, side })
     setResolutionNote('')
@@ -189,6 +252,7 @@ export function AdminDisputesPage() {
           : `Order #${orderId.slice(-8)} was settled for the seller. The protected funds were released.`,
       )
       setDecision(null)
+      setSelectedItem(null)
       setResolutionNote('')
       await queue.refetch()
     } catch (error) {
@@ -201,11 +265,14 @@ export function AdminDisputesPage() {
   function settlementActions(item: QueueItem, compact = false) {
     const unavailable = !item.order?._id || !isEscrowHeld(item.order)
     return (
-      <div className={`flex flex-wrap gap-2 ${compact ? 'min-w-56' : 'mt-4 justify-end border-t border-foose-border pt-4'}`}>
-        <Button disabled={unavailable} onClick={() => reviewSettlement(item, 'buyer')} size="sm" variant="warning">
+      <div
+        className={`flex flex-wrap gap-2 ${compact ? 'min-w-56' : 'mt-4 justify-end border-t border-foose-border pt-4'}`}
+        onClick={(event) => event.stopPropagation()}
+      >
+        <Button disabled={unavailable} onClick={(event) => { event.stopPropagation(); reviewSettlement(item, 'buyer') }} size="sm" variant="warning">
           Refund buyer
         </Button>
-        <Button disabled={unavailable} onClick={() => reviewSettlement(item, 'seller')} size="sm" variant="success">
+        <Button disabled={unavailable} onClick={(event) => { event.stopPropagation(); reviewSettlement(item, 'seller') }} size="sm" variant="success">
           Release seller
         </Button>
       </div>
@@ -327,15 +394,15 @@ export function AdminDisputesPage() {
                 columns={[
                   { cell: (item) => <Badge tone="warning">{(item.report?.status || 'submitted').replaceAll('_', ' ')}</Badge>, header: 'Status', key: 'status' },
                   { cell: (item) => categoryLabel(item), header: 'Category', key: 'category' },
-                  { cell: (item) => (item.order?._id ? `#${item.order._id.slice(-8)}` : '—'), header: 'Order', hideBelow: 'sm', key: 'order' },
+                  { cell: (item) => orderNumber(item.order), header: 'Order', hideBelow: 'sm', key: 'order' },
                   { cell: (item) => personName(item.order?.buyerId, 'Buyer'), header: 'Buyer', hideBelow: 'md', key: 'buyer' },
                   { cell: (item) => shopName(item.order?.shopId), header: 'Seller', hideBelow: 'lg', key: 'seller' },
                   { align: 'right', cell: (item) => formatMoney(item.order?.totalAmount, item.order?.currency), header: 'Amount', key: 'amount' },
                   { cell: (item) => formatDateTime(item.report?.createdAt || item.report?.frozenAt), header: 'Submitted', hideBelow: 'lg', key: 'submitted' },
-                  { cell: (item) => settlementActions(item, true), header: 'Settle', key: 'actions' },
                 ]}
                 empty={{ body: 'No reports match your search.', title: 'No matching reports' }}
                 minWidth={860}
+                onRowClick={setSelectedItem}
                 rowKey={(item, index) => item.report?._id || item.order?._id || String(index)}
                 rows={table.rows}
               />
@@ -347,7 +414,14 @@ export function AdminDisputesPage() {
                   const status = report?.status || 'submitted'
 
                   return (
-                    <article className="rounded-2xl border border-foose-border bg-foose-surface p-4 shadow-sm md:p-5" key={key}>
+                    <article
+                      className="cursor-pointer rounded-2xl border border-foose-border bg-foose-surface p-4 shadow-sm transition hover:border-accent/50 hover:shadow-md focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent md:p-5"
+                      key={key}
+                      onClick={() => setSelectedItem(item)}
+                      onKeyDown={(event) => { if (event.key === 'Enter' && event.currentTarget === event.target) setSelectedItem(item) }}
+                      role="button"
+                      tabIndex={0}
+                    >
                       <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
                         <div className="min-w-0">
                           <div className="mb-3 flex flex-wrap items-center gap-2">
@@ -357,7 +431,7 @@ export function AdminDisputesPage() {
                           </div>
                           <h2 className="break-words text-lg font-black text-foose-text">{categoryLabel(item)}</h2>
                           <p className="mt-1 break-words text-sm text-foose-muted">
-                            Order {order?._id ? `#${order._id.slice(-8)}` : 'not populated'} · {orderItems(order)}
+                            Order {orderNumber(order)} · {orderItems(order)}
                           </p>
                         </div>
                         <div className="shrink-0 lg:text-right">
@@ -393,30 +467,6 @@ export function AdminDisputesPage() {
                           )}
                         </div>
                       )}
-                      {!!order?._id && !!report?.evidence?.length && (
-                        <div className="mt-4">
-                          <h3 className="text-sm font-black text-foose-text">Private evidence</h3>
-                          <div className="mt-2 flex flex-wrap gap-2">
-                            {report.evidence.map((asset, evidenceIndex) => {
-                              const evidenceKey = `${order._id}:${evidenceIndex}`
-                              return (
-                                <Button
-                                  disabled={Boolean(openingEvidence)}
-                                  key={asset._id || evidenceKey}
-                                  loading={openingEvidence === evidenceKey}
-                                  loadingLabel="Creating private link..."
-                                  onClick={() => void openEvidence(order._id, evidenceIndex)}
-                                  size="sm"
-                                  variant="secondary"
-                                >
-                                  {`View ${asset.originalName || `evidence ${evidenceIndex + 1}`}`}
-                                </Button>
-                              )
-                            })}
-                          </div>
-                        </div>
-                      )}
-                      {settlementActions(item)}
                     </article>
                   )
                 })}
@@ -435,6 +485,147 @@ export function AdminDisputesPage() {
           </>
         )}
       </section>
+      {selectedItem && (
+        <div
+          aria-modal="true"
+          className="fixed inset-0 z-50 flex items-center justify-center bg-foose-text/45 p-4"
+          onClick={() => setSelectedItem(null)}
+          role="dialog"
+        >
+          <section
+            className="max-h-[92dvh] w-full max-w-4xl overflow-y-auto rounded-2xl bg-foose-surface shadow-2xl"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {(() => {
+              const order = selectedItem.order
+              const report = selectedItem.report
+              const buyer = populatedPerson(order?.buyerId)
+              const seller = sellerFor(order)
+              const transit = order?.delivery?.transit
+              const waybill = transit?.billImage
+              return (
+                <>
+                  <header className="sticky top-0 z-10 flex items-start justify-between gap-4 border-b border-foose-border bg-white/95 p-5 backdrop-blur md:p-6">
+                    <div>
+                      <div className="mb-2 flex flex-wrap gap-2">
+                        <Badge tone="warning">{(report?.status || 'submitted').replaceAll('_', ' ')}</Badge>
+                        {isEscrowHeld(order) && <Badge tone="accent">Funds frozen</Badge>}
+                      </div>
+                      <h2 className="text-2xl font-black text-foose-text">{categoryLabel(selectedItem)}</h2>
+                      <p className="mt-1 text-sm text-foose-muted">Order {orderNumber(order)}</p>
+                    </div>
+                    <Button aria-label="Close dispute details" onClick={() => setSelectedItem(null)} size="sm" variant="secondary">Close</Button>
+                  </header>
+
+                  <div className="space-y-5 p-5 md:p-6">
+                    {attachmentError && <p className="rounded-xl bg-foose-danger-bg p-3 text-sm font-semibold text-foose-danger" role="alert">{attachmentError}</p>}
+
+                    <section className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+                      {[
+                        ['Order total', formatMoney(order?.totalAmount, order?.currency)],
+                        ['Items subtotal', formatMoney(order?.subtotalAmount, order?.currency)],
+                        ['Delivery fee', formatMoney(order?.deliveryFee || order?.delivery?.fee, order?.currency)],
+                        ['Submitted', formatDateTime(report?.submittedAt || report?.createdAt)],
+                        ['Fulfillment', order?.fulfillmentStatus?.replaceAll('_', ' ') || order?.status || 'Unknown'],
+                        ['Settlement', order?.settlementStatus?.replaceAll('_', ' ') || order?.escrowStatus || 'Unknown'],
+                        ['Payment', order?.paymentMethod?.replaceAll('_', ' ') || 'Unknown'],
+                        ['Requested outcome', report?.requestedOutcome?.replaceAll('_', ' ') || 'Not recorded'],
+                      ].map(([label, value]) => (
+                        <div className="rounded-xl bg-foose-surface-low p-4" key={label}>
+                          <p className="text-xs font-black uppercase tracking-wide text-foose-muted">{label}</p>
+                          <p className="mt-1 break-words text-sm font-bold capitalize text-foose-text">{value}</p>
+                        </div>
+                      ))}
+                    </section>
+
+                    <section className="grid gap-4 lg:grid-cols-2">
+                      {[
+                        { label: 'Buyer', person: buyer },
+                        { label: `Seller · ${shopName(order?.shopId)}`, person: seller },
+                      ].map(({ label, person }) => (
+                        <article className="rounded-2xl border border-foose-border bg-white p-5" key={label}>
+                          <h3 className="text-lg font-black text-foose-text">{label}</h3>
+                          <dl className="mt-3 space-y-2 text-sm">
+                            <div><dt className="font-bold text-foose-muted">Name</dt><dd className="mt-0.5 text-foose-text">{personName(person, 'Not provided')}</dd></div>
+                            <div><dt className="font-bold text-foose-muted">Username</dt><dd className="mt-0.5 text-foose-text">{person?.username ? `@${person.username}` : 'Not provided'}</dd></div>
+                            <div><dt className="font-bold text-foose-muted">Email</dt><dd className="mt-0.5 break-all text-foose-text">{person?.email ? <a className="text-accent underline" href={`mailto:${person.email}`}>{person.email}</a> : 'Not provided'}</dd></div>
+                            <div><dt className="font-bold text-foose-muted">Phone</dt><dd className="mt-0.5 text-foose-text">{person?.phone ? <a className="text-accent underline" href={`tel:${person.phone}`}>{person.phone}</a> : 'Not provided'}</dd></div>
+                            <div><dt className="font-bold text-foose-muted">App location</dt><dd className="mt-0.5 text-foose-text">{locationLabel(person?.location)}</dd></div>
+                          </dl>
+                        </article>
+                      ))}
+                    </section>
+
+                    <section className="rounded-2xl border border-foose-border bg-white p-5">
+                      <h3 className="text-lg font-black text-foose-text">Order items</h3>
+                      <div className="mt-3 divide-y divide-foose-border">
+                        {(order?.items || []).map((item, index) => {
+                          const affected = Boolean(item._id && report?.affectedItemIds?.includes(item._id))
+                          return (
+                            <div className="flex items-start justify-between gap-4 py-3 text-sm" key={item._id || `${item.title}:${index}`}>
+                              <div><strong className="text-foose-text">{item.title}</strong><p className="mt-1 text-foose-muted">Quantity {item.quantity}{affected ? ' · Included in report' : ''}</p></div>
+                              <strong className="shrink-0 text-accent">{formatMoney(item.price * item.quantity, order?.currency)}</strong>
+                            </div>
+                          )
+                        })}
+                      </div>
+                    </section>
+
+                    <section className="rounded-2xl border border-foose-border bg-white p-5">
+                      <div className="flex flex-wrap items-start justify-between gap-3">
+                        <div><h3 className="text-lg font-black text-foose-text">Delivery and waybill</h3><p className="mt-1 text-sm capitalize text-foose-muted">{order?.delivery?.method?.replaceAll('_', ' ') || 'Method unavailable'}</p></div>
+                        {order?._id && waybill && (
+                          <PrivateAttachmentThumbnail
+                            key={`${order._id}:waybill`}
+                            kind="transit-bill"
+                            label={waybill.originalName || 'Waybill'}
+                            onError={setAttachmentError}
+                            orderId={order._id}
+                          />
+                        )}
+                      </div>
+                      <dl className="mt-4 grid gap-3 text-sm sm:grid-cols-2">
+                        <div><dt className="font-bold text-foose-muted">Destination</dt><dd className="mt-1 text-foose-text">{deliveryDestination(order)}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Recipient</dt><dd className="mt-1 text-foose-text">{order?.delivery?.destination?.recipientName || order?.delivery?.recipient?.name || 'Not provided'} · {order?.delivery?.destination?.recipientPhone || order?.delivery?.recipient?.phone || 'No phone'}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Transport company</dt><dd className="mt-1 text-foose-text">{order?.delivery?.company || transit?.serviceName || 'Not provided'}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Parcel number</dt><dd className="mt-1 text-foose-text">{transit?.parcelNumber || transit?.cargoTrackingNumber || order?.delivery?.trackingInfo || 'Not provided'}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Driver phone</dt><dd className="mt-1 text-foose-text">{transit?.driverPhone || 'Not provided'}</dd></div>
+                      </dl>
+                      {!waybill && <p className="mt-4 rounded-xl bg-foose-surface-low p-3 text-sm font-semibold text-foose-muted">No waybill was uploaded for this order.</p>}
+                    </section>
+
+                    <section className="rounded-2xl border border-foose-border bg-white p-5">
+                      <h3 className="text-lg font-black text-foose-text">Buyer report</h3>
+                      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-foose-text">{report?.detailedAccount || report?.details || report?.summary || 'No written account was supplied.'}</p>
+                      <p className="mt-3 text-xs font-bold text-foose-muted">Truthful-information declaration: {report?.declarationAccepted ? 'Accepted' : 'Not recorded'}</p>
+                      <div className="mt-4 border-t border-foose-border pt-4">
+                        <h4 className="text-sm font-black text-foose-text">Private evidence ({report?.evidence?.length || 0})</h4>
+                        <div className="mt-2 flex flex-wrap gap-2">
+                          {order?._id && report?.evidence?.map((asset, index) => {
+                            return (
+                              <PrivateAttachmentThumbnail
+                                index={index}
+                                key={asset._id || `${order._id}:${index}`}
+                                kind="report-evidence"
+                                label={asset.originalName || `Evidence ${index + 1}`}
+                                onError={setAttachmentError}
+                                orderId={order._id}
+                              />
+                            )
+                          })}
+                          {!report?.evidence?.length && <span className="text-sm text-foose-muted">No evidence files were attached.</span>}
+                        </div>
+                      </div>
+                    </section>
+
+                    {settlementActions(selectedItem)}
+                  </div>
+                </>
+              )
+            })()}
+          </section>
+        </div>
+      )}
       <ConfirmDialog
         cancelDisabled={settling}
         confirmDisabled={settling || resolutionNote.trim().length < 10}
@@ -456,6 +647,7 @@ export function AdminDisputesPage() {
           Decision note
           <textarea
             className="mt-2 min-h-28 w-full resize-y rounded-lg border border-foose-border bg-white px-3 py-2 text-sm font-normal leading-6 outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            data-dialog-initial-focus
             disabled={settling}
             maxLength={1000}
             onChange={(event) => setResolutionNote(event.target.value)}
@@ -466,6 +658,7 @@ export function AdminDisputesPage() {
         </label>
         {settlementError && <p className="mt-3 rounded-lg bg-foose-danger-bg px-3 py-2 text-sm font-semibold text-foose-danger" role="alert">{settlementError}</p>}
       </ConfirmDialog>
+      <MediaPreviewModal />
     </AdminShell>
   )
 }
