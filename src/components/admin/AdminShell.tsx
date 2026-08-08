@@ -8,7 +8,7 @@ import { withBasePath } from '../../utils/navigation'
 import { LogoutConfirmDialog } from '../auth/LogoutConfirmDialog'
 import { Icon, type IconName } from '../icons/Icon'
 
-type AdminSection = 'overview' | 'kyc' | 'disputes' | 'analytics' | 'users'
+type AdminSection = 'overview' | 'kyc' | 'disputes' | 'reports' | 'analytics' | 'users'
 
 type NavItem = {
   allowed: (roles?: UserRoles, legacyRole?: number | string) => boolean
@@ -24,6 +24,7 @@ const NAV_GROUPS: Array<{ items: NavItem[]; label: string }> = [
       { allowed: isSuperAdminRole, href: '/admin', icon: 'grid', key: 'overview', label: 'Dashboard' },
       { allowed: canReviewKyc, href: '/admin/kyc', icon: 'shield', key: 'kyc', label: 'KYC Reviews' },
       { allowed: canResolveDisputes, href: '/admin/disputes', icon: 'alert', key: 'disputes', label: 'Disputes' },
+      { allowed: isSuperAdminRole, href: '/admin/reports', icon: 'alert', key: 'reports', label: 'User Reports' },
     ],
     label: 'Operations',
   },
@@ -41,6 +42,7 @@ const SECTION_LABELS: Record<AdminSection, string> = {
   disputes: 'Disputes',
   kyc: 'KYC Reviews',
   overview: 'Dashboard',
+  reports: 'User Reports',
   users: 'Staff & Roles',
 }
 

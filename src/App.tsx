@@ -5,6 +5,8 @@ import { AdminAnalyticsPage } from './pages/AdminAnalyticsPage'
 import { AdminKycDetailPage } from './pages/AdminKycDetailPage'
 import { AdminKycPage } from './pages/AdminKycPage'
 import { AdminOverviewPage } from './pages/AdminOverviewPage'
+import { AdminReportDetailPage } from './pages/AdminReportDetailPage'
+import { AdminReportsPage } from './pages/AdminReportsPage'
 import { AdminUserRolesPage } from './pages/AdminUserRolesPage'
 import { LoginPage } from './pages/LoginPage'
 import { getCurrentAppPathname } from './utils/navigation'
@@ -46,6 +48,22 @@ export default function App() {
     return (
       <AuthRequired>
         <AdminDisputesPage />
+      </AuthRequired>
+    )
+  }
+
+  if (/^\/admin\/reports\/[^/]+/.test(pathname)) {
+    return (
+      <AuthRequired superAdminOnly>
+        <AdminReportDetailPage />
+      </AuthRequired>
+    )
+  }
+
+  if (pathname.startsWith('/admin/reports')) {
+    return (
+      <AuthRequired superAdminOnly>
+        <AdminReportsPage />
       </AuthRequired>
     )
   }

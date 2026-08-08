@@ -355,6 +355,38 @@ export type PaginatedKycRecords = {
   limit: number
 }
 
+export type UserReportReason =
+  | 'harassment'
+  | 'scam_or_fraud'
+  | 'counterfeit_or_fake_listings'
+  | 'inappropriate_content'
+  | 'spam'
+  | 'other'
+
+export type UserReport = {
+  _id: string
+  reporterId?: User | string
+  reportedUserId?: User | string
+  reason: UserReportReason
+  details?: string
+  status: 'open' | 'resolved' | 'dismissed' | string
+  isActive: boolean
+  createdAt?: string
+  resolution?: {
+    resolverId?: User | string
+    note?: string
+    resolvedAt?: string
+  }
+}
+
+export type PaginatedUserReports = {
+  records: UserReport[]
+  total: number
+  page: number
+  pages: number
+  limit: number
+}
+
 export type AdminStats = {
   charts: {
     disputeEscrow: Array<{ count: number; escrowStatus: string }>
