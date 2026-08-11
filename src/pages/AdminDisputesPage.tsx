@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react'
-import { AdminShell, Badge, Button, ConfirmDialog, DataTable, MediaPreviewModal, PageHeader } from '../components'
+import { AdminShell, Badge, BargainHistory, Button, ConfirmDialog, DataTable, MediaPreviewModal, PageHeader } from '../components'
 import { ChartFrame, Meter, StatusBar } from '../components/charts'
 import { statusColor } from '../constants/charts'
 import { useApiResource } from '../hooks/useApiResource'
@@ -92,6 +92,18 @@ function deliveryDestination(order?: DisputeOrder) {
     destination?.region || address?.region,
     address?.street,
   ].filter(Boolean).join(', ') || 'Not provided'
+}
+
+/**
+ * The delivery fee in pesewas, resolved from wherever it was recorded — a
+ * checkout-time snapshot, or the transit amount the seller entered while
+ * dispatching a station-pickup order. `null` means genuinely unknown yet (a
+ * station pickup whose seller hasn't dispatched); `0` means no fee applies.
+ */
+function deliveryFeeAmount(order?: DisputeOrder) {
+  const known = order?.deliveryFee || order?.delivery?.fee || order?.delivery?.transit?.amount
+  if (known) return known
+  return order?.delivery?.method === 'station_pickup' ? null : 0
 }
 
 function orderItems(order?: DisputeOrder) {
@@ -524,7 +536,7 @@ export function AdminDisputesPage() {
                       {[
                         ['Order total', formatMoney(order?.totalAmount, order?.currency)],
                         ['Items subtotal', formatMoney(order?.subtotalAmount, order?.currency)],
-                        ['Delivery fee', formatMoney(order?.deliveryFee || order?.delivery?.fee, order?.currency)],
+                        ['Delivery fee', deliveryFeeAmount(order) === null ? 'TBD' : formatMoney(deliveryFeeAmount(order) || 0, order?.currency)],
                         ['Submitted', formatDateTime(report?.submittedAt || report?.createdAt)],
                         ['Fulfillment', order?.fulfillmentStatus?.replaceAll('_', ' ') || order?.status || 'Unknown'],
                         ['Settlement', order?.settlementStatus?.replaceAll('_', ' ') || order?.escrowStatus || 'Unknown'],
@@ -588,7 +600,8 @@ export function AdminDisputesPage() {
                         <div><dt className="font-bold text-foose-muted">Destination</dt><dd className="mt-1 text-foose-text">{deliveryDestination(order)}</dd></div>
                         <div><dt className="font-bold text-foose-muted">Recipient</dt><dd className="mt-1 text-foose-text">{order?.delivery?.destination?.recipientName || order?.delivery?.recipient?.name || 'Not provided'} · {order?.delivery?.destination?.recipientPhone || order?.delivery?.recipient?.phone || 'No phone'}</dd></div>
                         <div><dt className="font-bold text-foose-muted">Transport company</dt><dd className="mt-1 text-foose-text">{order?.delivery?.company || transit?.serviceName || 'Not provided'}</dd></div>
-                        <div><dt className="font-bold text-foose-muted">Parcel number</dt><dd className="mt-1 text-foose-text">{transit?.parcelNumber || transit?.cargoTrackingNumber || order?.delivery?.trackingInfo || 'Not provided'}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Bus number</dt><dd className="mt-1 text-foose-text">{transit?.busNumber || 'Not provided'}</dd></div>
+                        <div><dt className="font-bold text-foose-muted">Amount to be paid</dt><dd className="mt-1 text-foose-text">{transit?.amount ? formatMoney(transit.amount, order?.currency) : 'Not provided'}</dd></div>
                         <div><dt className="font-bold text-foose-muted">Driver phone</dt><dd className="mt-1 text-foose-text">{transit?.driverPhone || 'Not provided'}</dd></div>
                       </dl>
                       {!waybill && <p className="mt-4 rounded-xl bg-foose-surface-low p-3 text-sm font-semibold text-foose-muted">No waybill was uploaded for this order.</p>}
@@ -617,6 +630,8 @@ export function AdminDisputesPage() {
                         </div>
                       </div>
                     </section>
+
+                    {order?._id && <BargainHistory key={order._id} orderId={order._id} />}
 
                     {settlementActions(selectedItem)}
                   </div>

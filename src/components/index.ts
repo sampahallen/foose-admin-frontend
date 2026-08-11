@@ -1,4 +1,5 @@
 export * from './admin/AdminShell'
+export * from './admin/BargainHistory'
 export * from './admin/KycActionDialog'
 export * from './auth/AuthRequired'
 export * from './auth/LogoutConfirmDialog'

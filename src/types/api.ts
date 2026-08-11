@@ -96,7 +96,46 @@ export type Listing = {
   promotionTags?: string[]
   visibility?: 'marketplace' | 'event'
   status?: 'active' | 'sold' | 'draft' | 'removed'
+  bargainingAllowed?: boolean
   views?: number
+  createdAt?: string
+  updatedAt?: string
+}
+
+export type BargainStatus =
+  | 'awaiting_seller'
+  | 'awaiting_buyer'
+  | 'accepted'
+  | 'consumed'
+  | 'declined'
+  | 'cancelled'
+  | 'closed'
+
+export type BargainOffer = {
+  _id?: string
+  actor: 'buyer' | 'seller'
+  amount: number
+  note?: string
+  createdAt?: string
+}
+
+/** Read-only negotiation history, surfaced as dispute evidence. */
+export type Bargain = {
+  _id: string
+  listingId?: Listing | string
+  buyerId?: User | string
+  sellerId?: User | string
+  conversationId: string
+  listPriceAtOpen: number
+  currency?: string
+  status: BargainStatus
+  offers: BargainOffer[]
+  roundCount: number
+  agreedPrice?: number
+  acceptedAt?: string
+  acceptedBy?: 'buyer' | 'seller'
+  consumedAt?: string
+  closedReason?: 'round_limit' | 'listing_unavailable' | 'declined' | 'cancelled'
   createdAt?: string
   updatedAt?: string
 }
@@ -109,9 +148,13 @@ export type Order = {
     _id?: string
     listingId?: Listing | string
     title: string
+    /** What the buyer paid per unit. Below `listPrice` when a bargain was used. */
     price: number
+    listPrice?: number
+    bargainId?: string
     quantity: number
   }>
+  bargainIds?: string[]
   subtotalAmount?: number
   deliveryFee?: number
   totalAmount: number
@@ -169,7 +212,9 @@ export type Order = {
     transit?: {
       serviceName?: string
       driverPhone?: string
-      parcelNumber?: string
+      busNumber?: string
+      /** The transit fee the buyer must pay to collect the parcel, in pesewas. */
+      amount?: number
       billAttachmentId?: string
       cargoTrackingNumber?: string
       billImage?: {
