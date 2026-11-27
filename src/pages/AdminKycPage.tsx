@@ -1,33 +1,32 @@
-import { useState } from 'react'
-import { AdminShell, Badge, Button, DataTable, KycActionDialog, PageHeader, Pagination } from '../components'
+import { AdminShell, Badge, Button, DataTable, ErrorState, LoadingState, PageHeader, Pagination } from '../components'
 import { ChartFrame, StatusBar } from '../components/charts'
 import { statusColor } from '../constants/charts'
 import { isSuperAdminRole } from '../constants/roles'
 import { useApiResource } from '../hooks/useApiResource'
 import { useAuth } from '../hooks/useAuth'
-import { useKycReviewAction } from '../hooks/useKycReviewAction'
+import { useQueryState } from '../hooks/useQueryState'
 import { useServerTable } from '../hooks/useServerTable'
 import type { AdminStats, KycRecord, PaginatedKycRecords, User } from '../types/api'
 import { exportRowsToCsv } from '../utils/exportCsv'
 import { formatDateTime, initials } from '../utils/format'
-import { navigateTo, withBasePath } from '../utils/navigation'
+import { withBasePath } from '../utils/navigation'
 
 type PendingKyc = KycRecord & {
   _id: string
   userId: User
 }
 
-type AcceptedKyc = Omit<KycRecord, 'reviewedBy' | 'userId'> & {
+type ReviewedKyc = Omit<KycRecord, 'reviewedBy' | 'userId'> & {
   _id: string
   reviewedBy?: User | string | null
   userId?: User | string | null
 }
 
-type AcceptedKycResponse = Omit<PaginatedKycRecords, 'records'> & {
-  records: AcceptedKyc[]
+type ReviewedKycResponse = Omit<PaginatedKycRecords, 'records'> & {
+  records: ReviewedKyc[]
 }
 
-type AcceptedFilters = {
+type ReviewedFilters = {
   idType: string
   page: number
   phoneVerified: string
@@ -36,8 +35,14 @@ type AcceptedFilters = {
   sort: string
 }
 
+type ReviewedView = 'accepted' | 'rejected'
+type KycView = 'pending' | ReviewedView
+
+const VIEW_DEFAULTS = { view: 'pending', page: 1 }
+const reviewedEndpoints = { accepted: '/admin/kyc/approved', rejected: '/admin/kyc/rejected' }
+const REVIEWED_DEFAULTS: ReviewedFilters = { idType: '', page: 1, phoneVerified: '', reviewedWithin: '', search: '', sort: 'newest' }
 const ACCEPTED_PREVIEW_SIZE = 5
-const ACCEPTED_PAGE_SIZE = 50
+const REVIEWED_PAGE_SIZE = 50
 
 const idTypeOptions = [
   { label: 'All ID types', value: '' },
@@ -46,8 +51,8 @@ const idTypeOptions = [
   { label: 'Driving License', value: 'Driving License' },
 ]
 
-function acceptedPath(basePath: string, state: AcceptedFilters) {
-  const params = new URLSearchParams({ limit: String(ACCEPTED_PAGE_SIZE), page: String(state.page) })
+function reviewedPath(basePath: string, state: ReviewedFilters) {
+  const params = new URLSearchParams({ limit: String(REVIEWED_PAGE_SIZE), page: String(state.page) })
   if (state.idType) params.set('idType', state.idType)
   if (state.phoneVerified) params.set('phoneVerified', state.phoneVerified)
   if (state.reviewedWithin) params.set('reviewedWithin', state.reviewedWithin)
@@ -56,8 +61,8 @@ function acceptedPath(basePath: string, state: AcceptedFilters) {
   return `${basePath}?${params.toString()}`
 }
 
-function previewPath() {
-  return `/admin/kyc/approved?limit=${ACCEPTED_PREVIEW_SIZE}&page=1&sort=newest`
+function previewPath(view: ReviewedView) {
+  return `${reviewedEndpoints[view]}?limit=${ACCEPTED_PREVIEW_SIZE}&page=1&sort=newest`
 }
 
 function isUserObject(user?: User | string | null): user is User {
@@ -82,113 +87,234 @@ function getReviewerName(user?: User | string | null) {
   return typeof user === 'string' ? 'Admin user' : user.name
 }
 
-function openRecord(id: string) {
-  navigateTo(`/admin/kyc/${id}`)
+function recordPath(id: string, view: KycView) {
+  const params = new URLSearchParams(view === 'pending' ? '' : window.location.search)
+  if (view !== 'pending') params.set('view', view)
+  const query = params.toString()
+  return withBasePath(`/admin/kyc/${encodeURIComponent(id)}${query ? `?${query}` : ''}`)
 }
 
-function SellerCell({ record }: { record: AcceptedKyc | PendingKyc }) {
+function RecordLink({ record, view }: { record: PendingKyc | ReviewedKyc; view: KycView }) {
+  return (
+    <a
+      aria-label={`${view === 'pending' ? 'Review' : 'View'} KYC for ${getUserName(record.userId)}`}
+      className="inline-flex min-h-10 items-center rounded-md px-3 text-sm font-bold text-accent hover:bg-accent-light focus-visible:outline-2 focus-visible:outline-accent"
+      href={recordPath(record._id, view)}
+    >
+      {view === 'pending' ? 'Review' : 'View record'}
+    </a>
+  )
+}
+
+function SellerCell({ record }: { record: ReviewedKyc | PendingKyc }) {
   const sellerName = getUserName(record.userId)
   const email = getUserEmail(record.userId)
   const username = getUserUsername(record.userId)
 
   return (
-    <div className="flex min-w-56 items-center gap-3">
+    <div className="flex min-w-0 items-center gap-3">
       <span className="inline-flex size-10 shrink-0 items-center justify-center rounded-full bg-accent-light text-sm font-bold text-accent">
         {initials(sellerName)}
       </span>
       <span className="min-w-0">
-        <strong className="block truncate">{sellerName}</strong>
-        <small className="block truncate text-xs font-semibold text-foose-muted">{email || (username ? `@${username}` : 'No account email')}</small>
+        <strong className="block wrap-anywhere">{sellerName}</strong>
+        <small className="block wrap-anywhere text-xs font-semibold text-foose-muted">{email || (username ? `@${username}` : 'No account email')}</small>
       </span>
     </div>
   )
 }
 
-function AcceptedKycPreviewPanel({ loading, onViewAll, records, total }: { loading: boolean; onViewAll: () => void; records: AcceptedKyc[]; total: number }) {
+function AcceptedKycPreviewPanel({ resource, onViewAll }: {
+  resource: ReturnType<typeof useApiResource<ReviewedKycResponse>>
+  onViewAll: () => void
+}) {
+  const records = resource.data?.records || []
+
   return (
-    <aside className="rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm xl:sticky xl:top-24 xl:self-start">
-      <div className="mb-5 flex items-start justify-between gap-4">
-        <div>
-          <h2 className="text-lg font-bold text-foose-text">Previously accepted KYCs</h2>
-          <p className="mt-1 text-sm leading-6 text-foose-muted">Latest approved seller verifications.</p>
-        </div>
-        <Badge tone="success">{total}</Badge>
+    <section className="rounded-xl border border-foose-border bg-foose-surface">
+      <div className="flex flex-wrap items-center justify-between gap-3 border-b border-foose-border px-4 py-3 md:px-5">
+        <h2 className="text-base font-bold text-foose-text">Recently accepted</h2>
+        <Button iconRight="arrow" onClick={onViewAll} size="sm" variant="secondary">View accepted records</Button>
+      </div>
+      {resource.loading && <p className="p-4 text-sm text-foose-muted" role="status">Loading accepted records…</p>}
+      {resource.error && <div className="p-4"><ErrorState message={resource.error} retry={resource.refetch} /></div>}
+      {!resource.loading && !resource.error && !records.length && (
+        <p className="p-4 text-sm text-foose-muted">No accepted KYC records yet.</p>
+      )}
+      {!!records.length && (
+        <ul className="divide-y divide-foose-border">
+          {records.map((record) => (
+            <li key={record._id}>
+              <a className="grid items-center gap-2 px-4 py-3 text-sm hover:bg-foose-surface-low focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-accent sm:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_minmax(0,1fr)] md:px-5" href={recordPath(record._id, 'accepted')}>
+                <SellerCell record={record} />
+                <span className="text-foose-muted">{record.idType || 'ID not set'}</span>
+                <span className="text-foose-muted sm:text-right">{formatDateTime(record.reviewedAt)}</span>
+              </a>
+            </li>
+          ))}
+        </ul>
+      )}
+    </section>
+  )
+}
+
+function ReviewedKycTable({ view }: { view: ReviewedView }) {
+  const table = useServerTable<ReviewedKycResponse, ReviewedFilters>({
+    basePath: reviewedEndpoints[view],
+    buildPath: reviewedPath,
+    defaults: REVIEWED_DEFAULTS,
+    resetKeyOnChange: 'page',
+  })
+
+  const records = table.data?.records || []
+  const total = table.data?.total || 0
+  const pages = table.data?.pages || 0
+  const limit = table.data?.limit || REVIEWED_PAGE_SIZE
+
+  function exportCsv() {
+    exportRowsToCsv(
+      `kyc-${view}-page.csv`,
+      [
+        { header: 'Seller', value: (record: ReviewedKyc) => getUserName(record.userId) },
+        { header: 'Email', value: (record: ReviewedKyc) => getUserEmail(record.userId) || '' },
+        { header: 'ID type', value: (record: ReviewedKyc) => record.idType || '' },
+        { header: 'ID number', value: (record: ReviewedKyc) => record.idNo || '' },
+        { header: 'Reviewed', value: (record: ReviewedKyc) => formatDateTime(record.reviewedAt) },
+        { header: 'Reviewer', value: (record: ReviewedKyc) => getReviewerName(record.reviewedBy) },
+        { header: 'Phone verified', value: (record: ReviewedKyc) => (record.phoneVerified ? 'Yes' : 'No') },
+      ],
+      records,
+    )
+  }
+
+  return (
+    <div className="space-y-5">
+      <div className="grid gap-3 rounded-xl border border-foose-border bg-foose-surface p-4 sm:grid-cols-2 xl:grid-cols-[minmax(0,2fr)_repeat(4,minmax(0,1fr))]">
+        <label className="min-w-0 text-sm font-semibold text-foose-text">
+          Search
+          <input
+            className="mt-2 h-11 min-w-0 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            maxLength={120}
+            onChange={(event) => table.set({ search: event.target.value })}
+            placeholder="Name, email, username, phone, or ID"
+            value={table.state.search}
+          />
+        </label>
+        <label className="min-w-0 text-sm font-semibold text-foose-text">
+          ID type
+          <select
+            className="mt-2 h-11 min-w-0 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            onChange={(event) => table.set({ idType: event.target.value })}
+            value={table.state.idType}
+          >
+            {idTypeOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}
+          </select>
+        </label>
+        <label className="min-w-0 text-sm font-semibold text-foose-text">
+          Phone
+          <select
+            className="mt-2 h-11 min-w-0 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            onChange={(event) => table.set({ phoneVerified: event.target.value })}
+            value={table.state.phoneVerified}
+          >
+            <option value="">All phone states</option>
+            <option value="true">Verified</option>
+            <option value="false">Not verified</option>
+          </select>
+        </label>
+        <label className="min-w-0 text-sm font-semibold text-foose-text">
+          Reviewed
+          <select
+            className="mt-2 h-11 min-w-0 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            onChange={(event) => table.set({ reviewedWithin: event.target.value })}
+            value={table.state.reviewedWithin}
+          >
+            <option value="">Any time</option>
+            <option value="7">Last 7 days</option>
+            <option value="30">Last 30 days</option>
+            <option value="90">Last 90 days</option>
+          </select>
+        </label>
+        <label className="min-w-0 text-sm font-semibold text-foose-text">
+          Sort
+          <select
+            className="mt-2 h-11 min-w-0 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
+            onChange={(event) => table.set({ sort: event.target.value })}
+            value={table.state.sort}
+          >
+            <option value="newest">Newest</option>
+            <option value="oldest">Oldest</option>
+          </select>
+        </label>
       </div>
 
-      {loading && <p className="text-sm font-semibold text-foose-muted">Loading accepted KYCs...</p>}
-
-      {!loading && !records.length && (
-        <div className="rounded-lg border border-dashed border-foose-border bg-foose-surface-low p-4 text-sm font-semibold text-foose-muted">
-          No accepted KYC records yet.
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <p aria-live="polite" className="text-sm font-semibold text-foose-muted">
+          {table.loading ? `Loading ${view} records…` : !table.error && `${total} matching records`}
+        </p>
+        <div className="flex flex-wrap gap-2">
+          {!table.isDefault && <Button onClick={table.reset} size="sm" variant="secondary">Reset search and filters</Button>}
+          <Button disabled={table.loading || Boolean(table.error) || !records.length} icon="download" onClick={exportCsv} size="sm" variant="secondary">
+            Export this page
+          </Button>
         </div>
-      )}
+      </div>
 
-      {!!records.length && (
-        <div className="space-y-4">
-          {records.map((record) => {
-            const sellerName = getUserName(record.userId)
-            return (
-              <a
-                className="block rounded-lg border border-foose-border bg-white p-3 transition hover:border-accent hover:bg-accent-light"
-                href={withBasePath(`/admin/kyc/${record._id}`)}
-                key={record._id}
-              >
-                <div className="flex items-start gap-3">
-                  <span className="inline-flex size-9 shrink-0 items-center justify-center rounded-full bg-foose-success-bg text-xs font-bold text-foose-success">
-                    {initials(sellerName)}
-                  </span>
-                  <span className="min-w-0 flex-1">
-                    <strong className="block truncate text-sm text-foose-text">{sellerName}</strong>
-                    <small className="block truncate text-xs font-semibold text-foose-muted">{getUserEmail(record.userId) || record.idNo || 'Accepted record'}</small>
-                    <span className="mt-2 flex flex-wrap items-center gap-2 text-xs font-semibold text-foose-faint">
-                      <span>{record.idType || 'ID not set'}</span>
-                      <span>{formatDateTime(record.reviewedAt)}</span>
-                    </span>
-                  </span>
-                </div>
-              </a>
-            )
-          })}
-        </div>
-      )}
-
-      <Button className="mt-5 w-full" full iconRight="arrow" onClick={onViewAll}>
-        View accepted records
-      </Button>
-    </aside>
+      <DataTable<ReviewedKyc>
+        compactRows
+        caption={`${view === 'accepted' ? 'Accepted' : 'Rejected'} KYC records`}
+        columns={[
+          { cell: (record) => <SellerCell record={record} />, header: 'Seller', key: 'seller' },
+          { cell: (record) => <Badge>{record.idType || 'Unknown'}</Badge>, header: 'ID type', hideBelow: 'sm', key: 'idType' },
+          { cell: (record) => record.idNo || 'Not provided', header: 'ID number', hideBelow: 'lg', key: 'idNo' },
+          { cell: (record) => formatDateTime(record.reviewedAt), header: 'Reviewed', hideBelow: 'md', key: 'reviewed' },
+          { cell: (record) => getReviewerName(record.reviewedBy), header: 'Reviewer', hideBelow: 'lg', key: 'reviewer' },
+          { cell: (record) => <Badge tone={record.phoneVerified ? 'success' : 'warning'}>{record.phoneVerified ? 'Verified' : 'Not verified'}</Badge>, header: 'Phone', hideBelow: 'sm', key: 'phone' },
+          ...(view === 'rejected' ? [{
+            cell: (record: ReviewedKyc) => record.correctionRequest?.fields.length ? 'Corrections requested' : record.rejectionReason || 'Not recorded',
+            header: 'Rejection details',
+            hideBelow: 'md' as const,
+            key: 'rejection',
+          }] : []),
+          { cell: (record) => <RecordLink record={record} view={view} />, header: 'Actions', key: 'actions' },
+        ]}
+        empty={{ body: 'Try a different search term or loosen the filters.', title: `No ${view} KYC records found` }}
+        error={table.error}
+        footer={
+          <Pagination
+            label="records"
+            onPageChange={(page) => table.set({ page })}
+            page={table.state.page}
+            pageCount={pages}
+            pageSize={limit}
+            total={total}
+          />
+        }
+        loading={table.loading}
+        onRetry={table.refetch}
+        rowKey={(record) => record._id}
+        rows={records}
+      />
+    </div>
   )
 }
 
 export function AdminKycPage() {
   const { user } = useAuth()
   const isSuperAdmin = isSuperAdminRole(user?.roles, user?.role)
-  const [view, setView] = useState<'accepted' | 'pending'>('pending')
+  const viewState = useQueryState({ defaults: VIEW_DEFAULTS })
+  const requestedView = viewState.state.view
+  const view = requestedView === 'accepted' || requestedView === 'rejected' ? requestedView : 'pending'
+  const setView = (nextView: KycView) => {
+    if (nextView !== view) viewState.set({ view: nextView, page: 1 })
+  }
 
   const pending = useApiResource<{ records: PendingKyc[] }>('/admin/kyc/pending')
-  const acceptedPreview = useApiResource<AcceptedKycResponse>(previewPath())
+  const acceptedPreview = useApiResource<ReviewedKycResponse>(previewPath('accepted'))
+  const rejectedPreview = useApiResource<ReviewedKycResponse>(previewPath('rejected'))
   const stats = useApiResource<AdminStats>(isSuperAdmin ? '/admin/stats' : null, isSuperAdmin)
 
-  const acceptedTable = useServerTable<AcceptedKycResponse, AcceptedFilters>({
-    basePath: '/admin/kyc/approved',
-    buildPath: acceptedPath,
-    defaults: { idType: '', page: 1, phoneVerified: '', reviewedWithin: '', search: '', sort: 'newest' },
-    resetKeyOnChange: 'page',
-  })
-
-  const kycAction = useKycReviewAction({
-    onSuccess: async () => {
-      await pending.refetch()
-      await acceptedPreview.refetch()
-      await acceptedTable.refetch()
-    },
-  })
-
   const pendingRecords = pending.data?.records || []
-  const previewRecords = acceptedPreview.data?.records || []
-  const acceptedRecords = acceptedTable.data?.records || []
-  const acceptedTotal = acceptedTable.data?.total || 0
-  const acceptedPages = acceptedTable.data?.pages || 0
-  const acceptedLimit = acceptedTable.data?.limit || ACCEPTED_PAGE_SIZE
 
   const kycStatusSegments = (stats.data?.charts.kycStatus || []).map((item) => ({
     color: statusColor(String(item.status) === 'approved' ? 'approved' : String(item.status) === 'rejected' ? 'rejected' : String(item.status) === 'pending' ? 'pending' : 'not_submitted'),
@@ -197,212 +323,58 @@ export function AdminKycPage() {
     label: String(item.status).replaceAll('_', ' '),
   }))
 
-  function exportAcceptedCsv() {
-    exportRowsToCsv(
-      'kyc-accepted-page.csv',
-      [
-        { header: 'Seller', value: (record: AcceptedKyc) => getUserName(record.userId) },
-        { header: 'Email', value: (record: AcceptedKyc) => getUserEmail(record.userId) || '' },
-        { header: 'ID type', value: (record: AcceptedKyc) => record.idType || '' },
-        { header: 'ID number', value: (record: AcceptedKyc) => record.idNo || '' },
-        { header: 'Reviewed', value: (record: AcceptedKyc) => formatDateTime(record.reviewedAt) },
-        { header: 'Reviewer', value: (record: AcceptedKyc) => getReviewerName(record.reviewedBy) },
-        { header: 'Phone verified', value: (record: AcceptedKyc) => (record.phoneVerified ? 'Yes' : 'No') },
-      ],
-      acceptedRecords,
-    )
-  }
-
   return (
     <AdminShell section="kyc">
       <section className="p-4 md:p-6 lg:p-8">
-        <PageHeader
-          actions={
-            <div className="inline-flex rounded-lg border border-foose-border bg-foose-surface p-1 shadow-sm">
-              <button
-                className={`min-h-10 rounded-md px-4 text-sm font-bold transition ${view === 'pending' ? 'bg-accent text-white shadow-sm' : 'text-foose-muted hover:bg-accent-light hover:text-accent'}`}
-                onClick={() => setView('pending')}
-                type="button"
-              >
-                Pending ({pendingRecords.length})
-              </button>
-              <button
-                className={`min-h-10 rounded-md px-4 text-sm font-bold transition ${view === 'accepted' ? 'bg-accent text-white shadow-sm' : 'text-foose-muted hover:bg-accent-light hover:text-accent'}`}
-                onClick={() => setView('accepted')}
-                type="button"
-              >
-                Accepted
-              </button>
-            </div>
-          }
-          description="Review pending identity submissions and search previously accepted KYC records."
-          title="KYC reviews"
-        />
-
-        {isSuperAdmin && !!kycStatusSegments.length && (
-          <ChartFrame className="mb-6" height="sm" responsive={false} title="KYC status breakdown">
-            <StatusBar onSegmentClick={(key) => key === 'approved' && setView('accepted')} segments={kycStatusSegments} />
-          </ChartFrame>
-        )}
+        <PageHeader title="KYC reviews" />
+        <div aria-label="KYC views" className="mb-5 grid grid-cols-3 gap-1 border-b sm:flex sm:flex-wrap sm:gap-x-5 border-foose-border" role="group">
+          {(['pending', 'accepted', 'rejected'] as const).map((key) => (
+            <button
+              aria-pressed={view === key}
+              className={`inline-flex min-w-0 min-h-12 flex-wrap items-center justify-center gap-x-2 border-b-2 px-1 py-2 text-center text-xs sm:text-sm font-bold focus-visible:outline-2 focus-visible:outline-accent ${view === key ? 'border-accent text-accent' : 'border-transparent text-foose-muted hover:text-foose-text'}`}
+              key={key}
+              onClick={() => setView(key)}
+              type="button"
+            >
+              {key === 'pending' ? 'Pending review' : key === 'accepted' ? 'Accepted records' : 'Rejected records'}
+              {key === 'pending' && pending.data && <Badge tone={view === key ? 'accent' : 'neutral'}>{pendingRecords.length}</Badge>}
+              {key === 'accepted' && acceptedPreview.data && <Badge tone={view === key ? 'accent' : 'neutral'}>{acceptedPreview.data.total}</Badge>}
+              {key === 'rejected' && rejectedPreview.data && <Badge tone={view === key ? 'accent' : 'neutral'}>{rejectedPreview.data.total}</Badge>}
+            </button>
+          ))}
+        </div>
 
         {view === 'pending' ? (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,1fr)_400px] xl:items-start">
-            <div className="min-w-0">
-              <DataTable<PendingKyc>
-                caption="Pending KYC submissions"
-                columns={[
-                  { cell: (record) => <SellerCell record={record} />, header: 'Seller name', key: 'seller' },
-                  { cell: (record) => formatDateTime(record.submittedAt), header: 'Submission date', hideBelow: 'md', key: 'submitted' },
-                  { cell: (record) => <Badge>{record.idType}</Badge>, header: 'ID type', hideBelow: 'sm', key: 'idType' },
-                  { cell: (record) => <Badge tone="accent">{record.status}</Badge>, header: 'Status', key: 'status' },
-                  {
-                    cell: (record) => (
-                      <div className="flex flex-wrap items-center justify-end gap-2">
-                        <Button onClick={() => openRecord(record._id)} size="sm" variant="secondary">View</Button>
-                        <Button
-                          loading={kycAction.busy && kycAction.action === 'approve' && kycAction.targetId === record._id}
-                          loadingLabel="Approving..."
-                          onClick={() => kycAction.request('approve', record._id)}
-                          size="sm"
-                        >
-                          Approve
-                        </Button>
-                        <Button
-                          loading={kycAction.busy && kycAction.action === 'reject' && kycAction.targetId === record._id}
-                          loadingLabel="Rejecting..."
-                          onClick={() => kycAction.request('reject', record._id)}
-                          size="sm"
-                          variant="secondary"
-                        >
-                          Reject
-                        </Button>
-                      </div>
-                    ),
-                    header: 'Actions',
-                    key: 'actions',
-                  },
-                ]}
-                empty={{ body: 'No pending KYC submissions are waiting for review.', title: 'KYC queue is clear' }}
-                error={pending.error}
-                loading={pending.loading}
-                minWidth={860}
-                onRetry={pending.refetch}
-                onRowClick={(record) => openRecord(record._id)}
-                rowKey={(record) => record._id}
-                rows={pendingRecords}
-              />
-            </div>
-
-            <AcceptedKycPreviewPanel loading={acceptedPreview.loading} onViewAll={() => setView('accepted')} records={previewRecords} total={acceptedPreview.data?.total || 0} />
+          <div className="space-y-6">
+            {pending.loading ? <LoadingState label="Loading pending submissions…" /> : <DataTable<PendingKyc>
+              compactRows
+              caption="Pending KYC submissions"
+              columns={[
+                { cell: (record) => <SellerCell record={record} />, header: 'Seller name', key: 'seller' },
+                { cell: (record) => formatDateTime(record.submittedAt), header: 'Submission date', hideBelow: 'md', key: 'submitted' },
+                { cell: (record) => <Badge>{record.idType}</Badge>, header: 'ID type', hideBelow: 'sm', key: 'idType' },
+                { cell: (record) => <RecordLink record={record} view="pending" />, header: 'Review', key: 'actions' },
+              ]}
+              empty={{ body: 'No pending KYC submissions are waiting for review.', title: 'KYC queue is clear' }}
+              error={pending.error}
+              onRetry={pending.refetch}
+              rowKey={(record) => record._id}
+              rows={pendingRecords}
+            />}
+            <AcceptedKycPreviewPanel onViewAll={() => setView('accepted')} resource={acceptedPreview} />
           </div>
         ) : (
-          <div className="space-y-5">
-            <div className="flex flex-wrap items-center justify-between gap-3">
-              <p className="text-sm font-semibold text-foose-muted">
-                {acceptedTotal ? `${acceptedTotal} accepted records` : 'No accepted records found'}
-              </p>
-              <Button disabled={!acceptedRecords.length} icon="download" onClick={exportAcceptedCsv} size="sm" variant="secondary">
-                Export this page
-              </Button>
-            </div>
-
-            <div className="grid gap-4 rounded-xl border border-foose-border bg-foose-surface p-5 shadow-sm lg:grid-cols-[minmax(220px,1fr)_180px_180px_180px_150px]">
-              <label className="text-sm font-semibold text-foose-text">
-                Search
-                <input
-                  className="mt-2 h-11 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => acceptedTable.set({ search: event.target.value })}
-                  placeholder="Name, email, username, phone, or ID"
-                  value={acceptedTable.state.search}
-                />
-              </label>
-              <label className="text-sm font-semibold text-foose-text">
-                ID type
-                <select
-                  className="mt-2 h-11 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => acceptedTable.set({ idType: event.target.value })}
-                  value={acceptedTable.state.idType}
-                >
-                  {idTypeOptions.map((option) => <option key={option.value || 'all'} value={option.value}>{option.label}</option>)}
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-foose-text">
-                Phone
-                <select
-                  className="mt-2 h-11 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => acceptedTable.set({ phoneVerified: event.target.value })}
-                  value={acceptedTable.state.phoneVerified}
-                >
-                  <option value="">All phone states</option>
-                  <option value="true">Verified</option>
-                  <option value="false">Not verified</option>
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-foose-text">
-                Reviewed
-                <select
-                  className="mt-2 h-11 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => acceptedTable.set({ reviewedWithin: event.target.value })}
-                  value={acceptedTable.state.reviewedWithin}
-                >
-                  <option value="">Any time</option>
-                  <option value="7">Last 7 days</option>
-                  <option value="30">Last 30 days</option>
-                  <option value="90">Last 90 days</option>
-                </select>
-              </label>
-              <label className="text-sm font-semibold text-foose-text">
-                Sort
-                <select
-                  className="mt-2 h-11 w-full rounded-lg border border-foose-border bg-white px-3 text-sm outline-none transition focus:border-accent focus:ring-4 focus:ring-accent/10"
-                  onChange={(event) => acceptedTable.set({ sort: event.target.value })}
-                  value={acceptedTable.state.sort}
-                >
-                  <option value="newest">Newest</option>
-                  <option value="oldest">Oldest</option>
-                </select>
-              </label>
-            </div>
-
-            <DataTable<AcceptedKyc>
-              caption="Accepted KYC records"
-              columns={[
-                { cell: (record) => <SellerCell record={record} />, header: 'Seller', key: 'seller' },
-                { cell: (record) => <Badge>{record.idType || 'Unknown'}</Badge>, header: 'ID type', hideBelow: 'sm', key: 'idType' },
-                { cell: (record) => record.idNo || 'Not provided', header: 'ID number', hideBelow: 'lg', key: 'idNo' },
-                { cell: (record) => formatDateTime(record.reviewedAt), header: 'Reviewed', hideBelow: 'md', key: 'reviewed' },
-                { cell: (record) => getReviewerName(record.reviewedBy), header: 'Reviewer', hideBelow: 'lg', key: 'reviewer' },
-                { cell: (record) => <Badge tone={record.phoneVerified ? 'success' : 'warning'}>{record.phoneVerified ? 'Verified' : 'Not verified'}</Badge>, header: 'Phone', key: 'phone' },
-                { cell: (record) => <Button onClick={() => openRecord(record._id)} size="sm" variant="secondary">View</Button>, header: 'Actions', key: 'actions' },
-              ]}
-              empty={{ body: 'Try a different search term or loosen the filters.', title: 'No accepted KYC records found' }}
-              error={acceptedTable.error}
-              footer={
-                <Pagination
-                  label="records"
-                  onPageChange={(page) => acceptedTable.set({ page })}
-                  page={acceptedTable.state.page}
-                  pageCount={acceptedPages}
-                  pageSize={acceptedLimit}
-                  total={acceptedTotal}
-                />
-              }
-              loading={acceptedTable.loading}
-              minWidth={980}
-              onRetry={acceptedTable.refetch}
-              onRowClick={(record) => openRecord(record._id)}
-              rowKey={(record) => record._id}
-              rows={acceptedRecords}
-            />
-          </div>
+          <ReviewedKycTable key={view} view={view} />
+        )}
+        {isSuperAdmin && !!kycStatusSegments.length && (
+          <ChartFrame className="mt-6" height="auto" responsive={false} title="KYC status breakdown">
+            <StatusBar onSegmentClick={(key) => {
+              if (key === 'approved') setView('accepted')
+              if (key === 'rejected' || key === 'pending') setView(key)
+            }} segments={kycStatusSegments} />
+          </ChartFrame>
         )}
       </section>
-
-      <KycActionDialog
-        controller={kycAction}
-        idNo={pendingRecords.find((record) => record._id === kycAction.targetId)?.idNo}
-        sellerName={getUserName(pendingRecords.find((record) => record._id === kycAction.targetId)?.userId)}
-      />
     </AdminShell>
   )
 }

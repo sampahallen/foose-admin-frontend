@@ -1,3 +1,4 @@
+import type { KycCorrectionField } from '../types/api'
 import { useState } from 'react'
 import { apiPut } from '../lib/api'
 import { getErrorMessage } from '../utils/errorMessage'
@@ -12,10 +13,14 @@ export function useKycReviewAction({
   const [action, setAction] = useState<KycAction | null>(null)
   const [targetId, setTargetId] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [fields, setFields] = useState<KycCorrectionField[]>([])
+  const [submissionCount, setSubmissionCount] = useState(0)
   const [reason, setReason] = useState('')
   const [dialogError, setDialogError] = useState('')
 
-  function request(nextAction: KycAction, kycId: string) {
+  function request(nextAction: KycAction, kycId: string, count = 0) {
+    setFields([])
+    setSubmissionCount(count)
     setAction(nextAction)
     setTargetId(kycId)
     setReason('')
@@ -31,14 +36,14 @@ export function useKycReviewAction({
   }
 
   async function confirm() {
-    if (!action || !targetId) return
+    if (!action || !targetId || busy || (action === 'reject' && !fields.length)) return
     setBusy(true)
     setDialogError('')
     try {
       if (action === 'approve') {
-        await apiPut(`/admin/kyc/${targetId}/approve`)
+        await apiPut(`/admin/kyc/${targetId}/approve`, { submissionCount })
       } else {
-        await apiPut(`/admin/kyc/${targetId}/reject`, { reason: reason.trim() })
+        await apiPut(`/admin/kyc/${targetId}/reject`, { fields, note: reason.trim(), submissionCount })
       }
       await onSuccess?.(action, targetId)
       setAction(null)
@@ -51,5 +56,5 @@ export function useKycReviewAction({
     }
   }
 
-  return { action, busy, cancel, confirm, dialogError, reason, request, setReason, targetId }
+  return { action, busy, cancel, confirm, dialogError, fields, reason, request, setFields, setReason, targetId }
 }

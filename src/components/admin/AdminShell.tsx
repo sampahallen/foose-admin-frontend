@@ -149,7 +149,7 @@ export function AdminShell({ actions, children, section }: { actions?: ReactNode
   return (
     <div className={`min-h-dvh bg-foose-bg lg:grid ${sidebarWidth}`}>
       <aside
-        className={`sticky top-0 z-40 flex min-h-16 items-center border-b border-foose-border bg-foose-surface p-4 transition-all lg:h-dvh lg:flex-col lg:justify-between lg:border-b-0 lg:border-r ${
+        className={`sticky top-0 z-40 flex min-h-16 items-center border-b border-foose-border bg-foose-surface p-4 transition-all lg:h-dvh lg:overflow-y-auto lg:flex-col lg:gap-4 lg:justify-between lg:border-b-0 lg:border-r ${
           sidebarCollapsed ? 'justify-between lg:items-center lg:px-3' : 'justify-between lg:items-stretch'
         }`}
       >
@@ -209,7 +209,7 @@ export function AdminShell({ actions, children, section }: { actions?: ReactNode
               </button>
             </div>
 
-            <div className="mt-4 flex-1 overflow-y-auto">
+            <div className="mt-4 min-h-0 flex-1 overflow-y-auto overscroll-contain">
               <NavLinks collapsed={false} groups={groups} onNavigate={closeMenu} section={section} />
             </div>
 

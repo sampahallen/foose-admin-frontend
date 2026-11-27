@@ -25,17 +25,16 @@ export function StatusBar({
 
   return (
     <div className="flex h-full flex-col justify-center gap-4">
-      <div className="flex h-4 w-full overflow-hidden rounded-full bg-foose-surface-low" role="img" aria-label={visible.map((segment) => `${segment.label} ${segment.count}`).join(', ')}>
-        {visible.map((segment, index) => (
+      <div className="flex h-4 w-full gap-0.5 overflow-hidden rounded-full bg-foose-surface-low" role="img" aria-label={visible.map((segment) => `${segment.label} ${segment.count}`).join(', ')}>
+        {visible.map((segment) => (
           <button
-            className="h-full shrink-0 transition hover:brightness-95 disabled:cursor-default"
+            className="h-full min-w-0 transition hover:brightness-95 disabled:cursor-default"
             disabled={!onSegmentClick}
             key={segment.key}
             onClick={() => onSegmentClick?.(segment.key)}
             style={{
               background: segment.color,
-              marginLeft: index === 0 ? 0 : 2,
-              width: `${(segment.count / total) * 100}%`,
+              flex: `${segment.count} 1 0%`,
             }}
             title={`${segment.label}: ${formatCount(segment.count)}`}
             type="button"

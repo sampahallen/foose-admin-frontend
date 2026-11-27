@@ -81,12 +81,12 @@ export function ConfirmDialog({
   return (
     <div aria-labelledby={titleId} aria-modal="true" className="fixed inset-0 z-[60] flex items-center justify-center bg-foose-text/45 p-4" role="dialog">
       <button aria-label="Close dialog" className="absolute inset-0 cursor-default" onClick={cancelDisabled ? undefined : onCancel} tabIndex={-1} type="button" />
-      <section className="relative w-full max-w-lg rounded-xl border border-foose-border bg-foose-surface p-5 shadow-2xl" ref={panelRef}>
+      <section className="relative max-h-full w-full max-w-lg overflow-y-auto overscroll-contain rounded-xl border border-foose-border bg-foose-surface p-4 shadow-2xl sm:p-5" ref={panelRef}>
         <div className="flex items-start gap-3">
           <span className={`inline-flex size-11 shrink-0 items-center justify-center rounded-lg ${styles.iconClass}`}>
             <Icon name={styles.icon} />
           </span>
-          <div className="min-w-0">
+          <div className="min-w-0 wrap-anywhere">
             <h2 className="text-lg font-bold text-foose-text" id={titleId}>{title}</h2>
             {description && <p className="mt-1 text-sm leading-6 text-foose-muted">{description}</p>}
           </div>

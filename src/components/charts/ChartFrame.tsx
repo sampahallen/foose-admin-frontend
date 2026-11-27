@@ -4,6 +4,7 @@ import { withBasePath } from '../../utils/navigation'
 import { ChartEmpty } from './ChartEmpty'
 
 const heightClass = {
+  auto: 'h-auto',
   lg: 'h-72',
   md: 'h-52',
   sm: 'h-36',

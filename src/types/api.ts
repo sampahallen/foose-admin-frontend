@@ -275,7 +275,10 @@ export type OrderReport = {
   updatedAt?: string
 }
 
+export type KycCorrectionField = 'idNo' | 'dob' | 'phone' | 'idFront' | 'idBack' | 'selfie' | 'idDocument'
+
 export type KycRecord = {
+  correctionRequest?: { fields: KycCorrectionField[]; note?: string }
   _id?: string
   userId?: User | string
   idType?: 'Ghana Card' | 'Passport' | 'Driving License'

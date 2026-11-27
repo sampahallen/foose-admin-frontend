@@ -31,6 +31,7 @@ export function DataTable<T>({
   onRetry,
   onRowClick,
   onSortChange,
+  compactRows = false,
   rowKey,
   rows,
   selectedKey,
@@ -46,6 +47,8 @@ export function DataTable<T>({
   onRetry?: () => void
   onRowClick?: (row: T) => void
   onSortChange?: (key: string) => void
+  /** Use the first column as the card heading and the last as its actions. */
+  compactRows?: boolean
   rowKey: (row: T, index: number) => string
   rows: T[]
   selectedKey?: string
@@ -58,7 +61,25 @@ export function DataTable<T>({
 
   return (
     <div className="space-y-4">
-      <TableShell caption={caption} minWidth={minWidth}>
+      {compactRows && (
+        <ul aria-label={caption} aria-busy={loading} className={`divide-y divide-foose-border rounded-xl border border-foose-border bg-foose-surface xl:hidden ${loading ? 'opacity-50' : ''}`}>
+          {rows.map((row, index) => (
+            <li className="min-w-0 space-y-3 p-4 wrap-anywhere" key={rowKey(row, index)}>
+              {columns.slice(0, 1).map((column) => <div key={column.key}>{column.cell(row, index)}</div>)}
+              <dl className="grid grid-cols-1 gap-x-4 gap-y-2 min-[360px]:grid-cols-2 md:grid-cols-3">
+                {columns.slice(1, -1).map((column) => (
+                  <div key={column.key}>
+                    <dt className="text-xs font-semibold text-foose-muted">{column.header}</dt>
+                    <dd className="mt-0.5 text-sm">{column.cell(row, index)}</dd>
+                  </div>
+                ))}
+              </dl>
+              {columns.slice(-1).map((column) => <div key={column.key}>{column.cell(row, index)}</div>)}
+            </li>
+          ))}
+        </ul>
+      )}
+      <TableShell caption={caption} className={compactRows ? 'hidden wrap-anywhere xl:block' : ''} minWidth={minWidth}>
         <thead>
           <tr>
             {columns.map((column) => {
